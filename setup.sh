@@ -1,6 +1,21 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+# ─── Minimum bash version (associative arrays require bash 4+) ───────────────
+if (( BASH_VERSINFO[0] < 4 )); then
+    echo "Error: bash 4+ is required (you have ${BASH_VERSION}). On macOS: brew install bash" >&2
+    exit 1
+fi
+
+# ─── Interactive TTY check ───────────────────────────────────────────────────
+if [[ ! -t 0 || ! -t 1 ]]; then
+    echo "Error: this script requires an interactive terminal (TTY)" >&2
+    exit 1
+fi
+
+# ─── Error trap for readable failures ────────────────────────────────────────
+trap 'echo -e "\033[0;31m✗ Failed at line $LINENO: $BASH_COMMAND\033[0m" >&2' ERR
+
 # ─── Colors & helpers ────────────────────────────────────────────────────────
 RED='\033[0;31m'
 GREEN='\033[0;32m'
@@ -13,13 +28,18 @@ RESET='\033[0m'
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ENV_FILE="$SCRIPT_DIR/.env"
 CONFIGS_DIR="$SCRIPT_DIR/configs"
+SECRETS_DIR="$SCRIPT_DIR/secrets"
 
-info()    { echo -e "${CYAN}$1${RESET}"; }
-success() { echo -e "${GREEN}✓ $1${RESET}"; }
-warn()    { echo -e "${YELLOW}⚠ $1${RESET}"; }
-error()   { echo -e "${RED}✗ $1${RESET}"; }
-header()  { echo -e "\n${BOLD}$1${RESET}"; }
-dim()     { echo -e "${DIM}$1${RESET}"; }
+# Ensure required directories exist with restrictive permissions
+mkdir -p "$CONFIGS_DIR" && chmod 700 "$CONFIGS_DIR"
+mkdir -p -m 700 "$SECRETS_DIR"
+
+info()    { echo -e "${CYAN}$1${RESET}" >&2; }
+success() { echo -e "${GREEN}✓ $1${RESET}" >&2; }
+warn()    { echo -e "${YELLOW}⚠ $1${RESET}" >&2; }
+error()   { echo -e "${RED}✗ $1${RESET}" >&2; }
+header()  { echo -e "\n${BOLD}$1${RESET}" >&2; }
+dim()     { echo -e "${DIM}$1${RESET}" >&2; }
 
 ask() {
     local prompt="$1"
@@ -55,8 +75,13 @@ ask_choice() {
 # ─── Clean path from drag & drop ─────────────────────────────────────────────
 clean_path() {
     local p="$1"
-    # Strip quotes, trailing spaces, and backslash-escaped spaces
-    p=$(echo "$p" | sed "s/^['\"]//;s/['\"]$//;s/ *$//;s/\\\\\\ / /g")
+    # Strip surrounding quotes (single or double)
+    p="${p#\'}" ; p="${p%\'}"
+    p="${p#\"}" ; p="${p%\"}"
+    # Strip trailing whitespace
+    p="${p%"${p##*[![:space:]]}"}"
+    # Unescape backslash-spaces (drag & drop on macOS)
+    p="${p//\\ / }"
     # Expand ~
     p="${p/#\~/$HOME}"
     echo "$p"
@@ -73,17 +98,8 @@ echo -e "${RESET}"
 # ─── Prerequisites check ────────────────────────────────────────────────────
 header "[0/5] Checking prerequisites..."
 
-missing=()
 if ! command -v docker &>/dev/null; then
-    missing+=("docker")
-fi
-if ! docker compose version &>/dev/null 2>&1 && ! docker-compose version &>/dev/null 2>&1; then
-    missing+=("docker compose")
-fi
-
-if [[ ${#missing[@]} -gt 0 ]]; then
-    error "Missing: ${missing[*]}"
-    echo "  Install Docker: https://docs.docker.com/get-docker/"
+    error "Docker not found. Install: https://docs.docker.com/get-docker/"
     exit 1
 fi
 
@@ -93,7 +109,17 @@ if ! docker info &>/dev/null 2>&1; then
     exit 1
 fi
 
-success "Docker is installed and running"
+# Detect compose command once and use everywhere
+if docker compose version &>/dev/null 2>&1; then
+    COMPOSE=(docker compose)
+elif docker-compose version &>/dev/null 2>&1; then
+    COMPOSE=(docker-compose)
+else
+    error "docker compose not found"
+    exit 1
+fi
+
+success "Docker is installed and running (${COMPOSE[*]})"
 
 # ─── Step 1: VPN ─────────────────────────────────────────────────────────────
 header "[1/5] VPN Configuration"
@@ -169,13 +195,10 @@ if [[ "$auth_choice" == "1" ]]; then
         fi
 
         # Store API key as a file (more secure than env var — not visible in docker inspect)
-        secrets_dir="$SCRIPT_DIR/secrets"
-        mkdir -p "$secrets_dir"
-        echo -n "$api_key" > "$secrets_dir/anthropic_api_key"
-        chmod 600 "$secrets_dir/anthropic_api_key"
+        (umask 077; echo -n "$api_key" > "$SECRETS_DIR/anthropic_api_key")
         # Clear the key from shell memory
         api_key=""; unset api_key
-        success "API key saved to secrets/anthropic_api_key"
+        success "API key saved to $SECRETS_DIR/anthropic_api_key"
         break
     done
 else
@@ -219,8 +242,12 @@ success "Will mount $projects_path → /home/claude/projects"
 
 # ─── Write .env file (all at once) ──────────────────────────────────────────
 {
-    for key in "${!env_vars[@]}"; do
-        echo "${key}=\"${env_vars[$key]}\""
+    for key in $(printf '%s\n' "${!env_vars[@]}" | sort); do
+        val="${env_vars[$key]}"
+        # Escape backslashes and double quotes for .env format
+        val="${val//\\/\\\\}"
+        val="${val//\"/\\\"}"
+        echo "${key}=\"${val}\""
     done
 } > "$ENV_FILE"
 chmod 600 "$ENV_FILE"
@@ -231,7 +258,7 @@ echo ""
 dim "  Hide directories from Claude Code inside your projects."
 dim "  Two levels of protection:"
 dim "    Soft  — .claudeignore: Claude Code won't search/read these paths"
-dim "    Hard  — tmpfs overlay: empty dir mounted over real content (physically invisible)"
+dim "    Hard  — tmpfs overlay: empty dir mounted over real content (hidden inside container)"
 echo ""
 
 # Suspicious path patterns to auto-detect (name patterns for find -name)
@@ -247,7 +274,7 @@ for pattern in "${SUSPECT_PATTERNS[@]}"; do
         # Make relative to projects_path
         rel="${found_path#"$projects_path"/}"
         detected_paths+=("$rel")
-    done < <(find "$projects_path" -maxdepth 4 -name "$pattern" 2>/dev/null)
+    done < <(find "$projects_path" -maxdepth 4 -type d -name "$pattern" 2>/dev/null)
 done
 
 if [[ ${#detected_paths[@]} -gt 0 ]]; then
@@ -288,10 +315,10 @@ if [[ ${#detected_paths[@]} -gt 0 ]]; then
                     selected[$idx]=1
                 fi
             else
-                error "Invalid number" >&2
+                error "Invalid number"
             fi
         else
-            error "Invalid input" >&2
+            error "Invalid input"
         fi
     done
 
@@ -380,7 +407,7 @@ while [[ "$add_more" == "1" ]]; do
                             "Soft (.claudeignore only)" \
                             "Hard (tmpfs overlay — physically hidden)")
                     else
-                        dim "    '$entry' is a file — only soft exclusion available" >&2
+                        dim "    '$entry' is a file — only soft exclusion available"
                         level="1"
                     fi
 
@@ -444,9 +471,11 @@ fi
 
 if [[ ${#unique_overlay[@]} -gt 0 ]]; then
     override_file="$SCRIPT_DIR/docker-compose.override.yml"
-    # Preserve existing override content if it has non-volume sections
+    # Backup existing override before overwriting
     if [[ -f "$override_file" ]]; then
-        warn "docker-compose.override.yml exists — will be regenerated with new overlays"
+        backup="${override_file}.bak.$(date +%Y%m%d%H%M%S)"
+        cp "$override_file" "$backup"
+        warn "docker-compose.override.yml backed up to $(basename "$backup")"
     fi
     {
         echo "# Generated by claudebox setup.sh"
@@ -482,7 +511,8 @@ if [[ "$choice" == "1" || "$choice" == "2" ]]; then
     info "Building Docker image (this may take a few minutes on first run)..."
     echo ""
 
-    if ! docker compose -f "$SCRIPT_DIR/docker-compose.yml" build; then
+    # Run from SCRIPT_DIR so compose auto-picks up docker-compose.override.yml
+    if ! (cd "$SCRIPT_DIR" && "${COMPOSE[@]}" build); then
         error "Build failed. Check the output above for details."
         exit 1
     fi
@@ -492,8 +522,8 @@ if [[ "$choice" == "1" || "$choice" == "2" ]]; then
         echo ""
         info "Starting container..."
 
-        if ! docker compose -f "$SCRIPT_DIR/docker-compose.yml" up -d; then
-            error "Failed to start. Check: docker compose logs"
+        if ! (cd "$SCRIPT_DIR" && "${COMPOSE[@]}" up -d); then
+            error "Failed to start. Check: cd $SCRIPT_DIR && ${COMPOSE[*]} logs"
             exit 1
         fi
 
@@ -502,7 +532,7 @@ if [[ "$choice" == "1" || "$choice" == "2" ]]; then
         echo -e "${BOLD}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${RESET}"
         echo ""
         echo -e "  ${GREEN}${BOLD}To enter the container:${RESET}"
-        echo -e "  ${CYAN}docker compose exec claudebox bash${RESET}"
+        echo -e "  ${CYAN}${COMPOSE[*]} exec claudebox bash${RESET}"
         echo ""
         echo -e "  ${GREEN}${BOLD}Inside the container:${RESET}"
         echo -e "  ${CYAN}claude-safe${RESET}  — start Claude Code (with API key)"
@@ -517,9 +547,9 @@ else
     echo -e "${BOLD}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${RESET}"
     echo ""
     echo -e "  ${GREEN}${BOLD}When you're ready:${RESET}"
-    echo -e "  ${CYAN}docker compose build${RESET}"
-    echo -e "  ${CYAN}docker compose up -d${RESET}"
-    echo -e "  ${CYAN}docker compose exec claudebox bash${RESET}"
+    echo -e "  ${CYAN}cd $(basename "$SCRIPT_DIR") && ${COMPOSE[*]} build${RESET}"
+    echo -e "  ${CYAN}${COMPOSE[*]} up -d${RESET}"
+    echo -e "  ${CYAN}${COMPOSE[*]} exec claudebox bash${RESET}"
     echo ""
     echo -e "${BOLD}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${RESET}"
 fi
