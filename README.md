@@ -34,8 +34,8 @@ cp configs/amnezia.conf.example configs/amnezia.conf
 
 # 2. Создать .env файл
 cat > .env <<EOF
-ANTHROPIC_API_KEY=sk-ant-your-key-here
-PROJECTS_PATH=~/projects
+ANTHROPIC_API_KEY="sk-ant-your-key-here"
+PROJECTS_PATH="/home/youruser/projects"
 EOF
 
 # 3. Собрать и запустить

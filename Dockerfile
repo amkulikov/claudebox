@@ -8,6 +8,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         ca-certificates \
         gnupg \
         iptables \
+        ip6tables \
         iproute2 \
         dns-root-data \
         dnsutils \
@@ -24,7 +25,7 @@ RUN curl -fsSL https://deb.nodesource.com/setup_22.x | bash - \
 
 # ─── AmneziaWG ──────────────────────────────────────────────────────────────
 RUN curl -fsSL https://raw.githubusercontent.com/amnezia-vpn/amneziawg-linux-kernel-module/master/install.sh | bash \
-    || true
+    || echo "WARNING: AmneziaWG kernel module install failed (expected in Docker build)"
 # Install amneziawg-tools (awg, awg-quick)
 RUN apt-get update && apt-get install -y --no-install-recommends \
         software-properties-common \
@@ -38,16 +39,24 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         curl -fsSL https://github.com/amnezia-vpn/amneziawg-tools/archive/refs/heads/master.tar.gz | tar xz && \
         cd amneziawg-tools-master/src && \
         make && make install && \
-        cd / && rm -rf /tmp/amneziawg-tools-master \
+        cd / && rm -rf /tmp/amneziawg-tools-master && \
+        apt-get purge -y build-essential && apt-get autoremove -y \
     ) \
     && rm -rf /var/lib/apt/lists/*
 
+# Verify at least one WG tool is available
+RUN which awg-quick || which wg-quick || (echo "ERROR: No WireGuard tools installed" && exit 1)
+
 # ─── Claude Code CLI ────────────────────────────────────────────────────────
-RUN npm install -g @anthropic-ai/claude-code
+RUN npm install -g @anthropic-ai/claude-code@latest
 
 # ─── User setup ─────────────────────────────────────────────────────────────
 RUN useradd -m -s /bin/bash -G sudo claude \
     && echo "claude ALL=(ALL) NOPASSWD:ALL" > /etc/sudoers.d/claude
+
+# ─── Directories with correct ownership ─────────────────────────────────────
+RUN mkdir -p /home/claude/projects /home/claude/.claude \
+    && chown -R claude:claude /home/claude/projects /home/claude/.claude
 
 # ─── Health check script ────────────────────────────────────────────────────
 COPY scripts/health-check.sh /usr/local/bin/health-check

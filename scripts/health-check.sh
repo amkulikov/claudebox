@@ -9,7 +9,7 @@ DIM='\033[2m'
 RESET='\033[0m'
 
 ok()   { echo -e "  ${GREEN}✓${RESET} $1"; }
-fail() { echo -e "  ${RED}✗${RESET} $1"; }
+fail() { echo -e "  ${RED}✗${RESET} $1"; errors=$((errors + 1)); }
 warn() { echo -e "  ${YELLOW}⚠${RESET} $1"; }
 
 echo ""
@@ -23,7 +23,6 @@ errors=0
 echo -e "${CYAN}  VPN${RESET}"
 if ip link show awg0 &>/dev/null 2>&1; then
     ok "AmneziaWG interface (awg0) is up"
-    # Show VPN IP
     vpn_ip=$(ip -4 addr show awg0 2>/dev/null | grep -oP '(?<=inet\s)\d+(\.\d+){3}')
     if [[ -n "$vpn_ip" ]]; then
         ok "VPN IP: $vpn_ip"
@@ -36,7 +35,6 @@ elif ip link show wg0 &>/dev/null 2>&1; then
     fi
 else
     fail "No VPN interface found (awg0/wg0)"
-    ((errors++))
 fi
 
 # Show peer status
@@ -56,12 +54,11 @@ echo ""
 
 # 2. DNS
 echo -e "${CYAN}  DNS${RESET}"
-if nslookup api.anthropic.com &>/dev/null 2>&1; then
-    resolved_ip=$(nslookup api.anthropic.com 2>/dev/null | grep -A1 "Name:" | grep "Address:" | head -1 | awk '{print $2}')
-    ok "api.anthropic.com resolves to ${resolved_ip:-OK}"
+resolved_ip=$(dig +short api.anthropic.com 2>/dev/null | head -1)
+if [[ -n "$resolved_ip" ]]; then
+    ok "api.anthropic.com resolves to ${resolved_ip}"
 else
     fail "Cannot resolve api.anthropic.com"
-    ((errors++))
 fi
 
 echo ""
@@ -72,7 +69,6 @@ if curl -sf --max-time 5 "https://api.anthropic.com" >/dev/null 2>&1; then
     ok "HTTPS connection to api.anthropic.com"
 else
     fail "Cannot reach api.anthropic.com over HTTPS"
-    ((errors++))
 fi
 
 echo ""
@@ -84,7 +80,6 @@ if command -v claude &>/dev/null; then
     ok "Claude Code installed (${claude_version})"
 else
     fail "Claude Code CLI not found"
-    ((errors++))
 fi
 
 if [[ -n "${ANTHROPIC_API_KEY:-}" ]]; then
@@ -101,7 +96,7 @@ echo ""
 # 5. Projects
 echo -e "${CYAN}  Projects${RESET}"
 if [[ -d /home/claude/projects ]]; then
-    count=$(ls -1 /home/claude/projects 2>/dev/null | wc -l)
+    count=$(find /home/claude/projects -maxdepth 1 -mindepth 1 2>/dev/null | wc -l)
     ok "Projects directory mounted ($count items)"
 else
     warn "Projects directory not found"
@@ -115,3 +110,5 @@ else
     echo -e "  ${RED}${BOLD}$errors check(s) failed${RESET}"
 fi
 echo ""
+
+exit "$errors"

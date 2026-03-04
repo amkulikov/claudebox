@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-set -euo pipefail
+set -uo pipefail
 
 RED='\033[0;31m'
 GREEN='\033[0;32m'
@@ -74,17 +74,43 @@ setup_killswitch() {
         return
     fi
 
-    # Allow only VPN traffic + DNS + local network
+    # Parse DNS servers from VPN config to restrict DNS traffic
+    local dns_servers
+    dns_servers=$(grep -i '^DNS' "$AWG_CONF" | head -1 | awk -F'=' '{print $2}' | tr ',' '\n' | tr -d ' ')
+
+    # Set default policy to DROP first (no traffic leak window)
+    sudo iptables -P OUTPUT DROP 2>/dev/null || true
     sudo iptables -F OUTPUT 2>/dev/null || true
+
+    # Block all IPv6 to prevent leaks
+    sudo ip6tables -P OUTPUT DROP 2>/dev/null || true
+    sudo ip6tables -F OUTPUT 2>/dev/null || true
+    sudo ip6tables -A OUTPUT -o lo -j ACCEPT
+    sudo ip6tables -A OUTPUT -j DROP
+
+    # IPv4: allow only VPN traffic
     sudo iptables -A OUTPUT -o lo -j ACCEPT
     sudo iptables -A OUTPUT -o awg0 -j ACCEPT
     sudo iptables -A OUTPUT -o wg0 -j ACCEPT
     sudo iptables -A OUTPUT -d "$endpoint" -j ACCEPT
-    sudo iptables -A OUTPUT -d 10.0.0.0/8 -j ACCEPT
-    sudo iptables -A OUTPUT -d 172.16.0.0/12 -j ACCEPT
-    sudo iptables -A OUTPUT -d 192.168.0.0/16 -j ACCEPT
-    sudo iptables -A OUTPUT -p udp --dport 53 -j ACCEPT
-    sudo iptables -A OUTPUT -j DROP
+
+    # Allow DNS only to servers from VPN config
+    if [[ -n "$dns_servers" ]]; then
+        for dns in $dns_servers; do
+            sudo iptables -A OUTPUT -d "$dns" -p udp --dport 53 -j ACCEPT
+            sudo iptables -A OUTPUT -d "$dns" -p tcp --dport 53 -j ACCEPT
+        done
+    fi
+
+    # Allow Docker network (for communication with host)
+    local docker_network
+    docker_network=$(ip -4 route show default 2>/dev/null | awk '{print $3}' | head -1)
+    if [[ -n "$docker_network" ]]; then
+        # Allow only the Docker gateway subnet (/16)
+        local docker_subnet
+        docker_subnet=$(echo "$docker_network" | awk -F. '{print $1"."$2".0.0/16"}')
+        sudo iptables -A OUTPUT -d "$docker_subnet" -j ACCEPT
+    fi
 
     success "Kill switch active — traffic only through VPN"
 }
@@ -119,7 +145,7 @@ if start_vpn; then
 fi
 
 if $vpn_ok; then
-    check_api
+    check_api || true
 fi
 
 echo ""

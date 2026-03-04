@@ -52,8 +52,17 @@ ask_choice() {
     done
 }
 
+# ─── Clean path from drag & drop ─────────────────────────────────────────────
+clean_path() {
+    local p="$1"
+    # Strip quotes, trailing spaces, and backslash-escaped spaces
+    p=$(echo "$p" | sed "s/^['\"]//;s/['\"]$//;s/ *$//;s/\\\\\\ / /g")
+    # Expand ~
+    p="${p/#\~/$HOME}"
+    echo "$p"
+}
+
 # ─── Banner ──────────────────────────────────────────────────────────────────
-clear
 echo -e "${BOLD}"
 echo "  ┌─────────────────────────────────┐"
 echo "  │       Claudebox Setup           │"
@@ -98,12 +107,7 @@ vpn_configured=false
 
 while true; do
     vpn_path=$(ask "Path to your AmneziaWG config file (or drag & drop)")
-
-    # Strip quotes and trailing spaces (from drag & drop)
-    vpn_path=$(echo "$vpn_path" | sed "s/^['\"]//;s/['\"]$//;s/ *$//")
-
-    # Expand ~ to home
-    vpn_path="${vpn_path/#\~/$HOME}"
+    vpn_path=$(clean_path "$vpn_path")
 
     if [[ ! -f "$vpn_path" ]]; then
         error "File not found: $vpn_path"
@@ -142,8 +146,8 @@ auth_choice=$(ask_choice "How do you want to authenticate with Claude?" \
     "API key (paste now)" \
     "Interactive login (in browser, after container starts)")
 
-# Initialize .env file
-: > "$ENV_FILE"
+# Collect .env values (write all at once at the end to avoid partial truncation)
+declare -A env_vars
 
 if [[ "$auth_choice" == "1" ]]; then
     while true; do
@@ -162,9 +166,8 @@ if [[ "$auth_choice" == "1" ]]; then
             fi
         fi
 
-        echo "ANTHROPIC_API_KEY=$api_key" >> "$ENV_FILE"
-        chmod 600 "$ENV_FILE"
-        success "API key saved to .env"
+        env_vars[ANTHROPIC_API_KEY]="$api_key"
+        success "API key will be saved to .env"
         break
     done
 else
@@ -181,7 +184,7 @@ echo ""
 
 default_projects="$HOME/projects"
 projects_path=$(ask "Path to your projects directory" "$default_projects")
-projects_path="${projects_path/#\~/$HOME}"
+projects_path=$(clean_path "$projects_path")
 
 if [[ ! -d "$projects_path" ]]; then
     choice=$(ask_choice "Directory '$projects_path' doesn't exist. Create it?" "Yes" "Choose different path" "Skip")
@@ -190,7 +193,7 @@ if [[ ! -d "$projects_path" ]]; then
         success "Created $projects_path"
     elif [[ "$choice" == "2" ]]; then
         projects_path=$(ask "Path to your projects directory")
-        projects_path="${projects_path/#\~/$HOME}"
+        projects_path=$(clean_path "$projects_path")
         if [[ ! -d "$projects_path" ]]; then
             mkdir -p "$projects_path"
             success "Created $projects_path"
@@ -202,9 +205,17 @@ if [[ ! -d "$projects_path" ]]; then
     fi
 fi
 
-# Save projects path to .env
-echo "PROJECTS_PATH=$projects_path" >> "$ENV_FILE"
+# Save projects path
+env_vars[PROJECTS_PATH]="$projects_path"
 success "Will mount $projects_path → /home/claude/projects"
+
+# ─── Write .env file (all at once) ──────────────────────────────────────────
+{
+    for key in "${!env_vars[@]}"; do
+        echo "${key}=\"${env_vars[$key]}\""
+    done
+} > "$ENV_FILE"
+chmod 600 "$ENV_FILE"
 
 # ─── Step 4: Build & Launch ──────────────────────────────────────────────────
 header "[4/4] Build & Launch"
