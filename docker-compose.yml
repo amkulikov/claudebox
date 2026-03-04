@@ -4,6 +4,8 @@ services:
     container_name: claudebox
     cap_add:
       - NET_ADMIN
+    cap_drop:
+      - ALL
     devices:
       - /dev/net/tun:/dev/net/tun
     sysctls:
@@ -13,11 +15,19 @@ services:
       - ./configs/amnezia.conf:/etc/amnezia/awg0.conf:ro
       - ${PROJECTS_PATH:-./_projects}:/home/claude/projects
       - claude-config:/home/claude/.claude
+      - ./secrets/anthropic_api_key:/run/secrets/anthropic_api_key:ro
     env_file:
       - .env
     environment:
-      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}
       - KILLSWITCH=${KILLSWITCH:-1}
+      - ANTHROPIC_API_KEY_FILE=/run/secrets/anthropic_api_key
+    # Resource limits to protect the host
+    deploy:
+      resources:
+        limits:
+          memory: 4g
+          cpus: "2.0"
+    pids_limit: 256
     stdin_open: true
     tty: true
     restart: unless-stopped

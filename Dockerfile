@@ -51,8 +51,9 @@ RUN which awg-quick || which wg-quick || (echo "ERROR: No WireGuard tools instal
 RUN npm install -g @anthropic-ai/claude-code@latest
 
 # ─── User setup ─────────────────────────────────────────────────────────────
-RUN useradd -m -s /bin/bash -G sudo claude \
-    && echo "claude ALL=(ALL) NOPASSWD:ALL" > /etc/sudoers.d/claude
+RUN useradd -m -s /bin/bash claude \
+    && echo "claude ALL=(root) NOPASSWD: /usr/bin/awg-quick, /usr/bin/wg-quick, /usr/sbin/iptables, /usr/sbin/ip6tables, /usr/bin/awg, /usr/bin/wg, /usr/sbin/ip" > /etc/sudoers.d/claude \
+    && chmod 440 /etc/sudoers.d/claude
 
 # ─── Directories with correct ownership ─────────────────────────────────────
 RUN mkdir -p /home/claude/projects /home/claude/.claude \

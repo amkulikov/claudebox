@@ -32,17 +32,21 @@ git clone <repo-url> && cd claudebox
 cp configs/amnezia.conf.example configs/amnezia.conf
 # Отредактировать configs/amnezia.conf — вставить данные вашего сервера
 
-# 2. Создать .env файл
+# 2. Сохранить API-ключ (через файл — безопаснее чем env var)
+mkdir -p secrets
+echo -n "sk-ant-your-key-here" > secrets/anthropic_api_key
+chmod 600 secrets/anthropic_api_key
+
+# 3. Создать .env файл
 cat > .env <<EOF
-ANTHROPIC_API_KEY="sk-ant-your-key-here"
 PROJECTS_PATH="/home/youruser/projects"
 EOF
 
-# 3. Собрать и запустить
+# 4. Собрать и запустить
 docker compose build
 docker compose up -d
 
-# 4. Войти в контейнер
+# 5. Войти в контейнер
 docker compose exec claudebox bash
 ```
 
@@ -61,13 +65,13 @@ health-check
 
 Ваши проекты доступны внутри контейнера в `/home/claude/projects`.
 
-## Переменные окружения
+## Конфигурация
 
-| Переменная | Описание | По умолчанию |
+| Параметр | Описание | По умолчанию |
 |---|---|---|
-| `ANTHROPIC_API_KEY` | API-ключ Anthropic | — |
-| `PROJECTS_PATH` | Путь к проектам на хосте | `~/projects` |
-| `KILLSWITCH` | Kill-switch: блокировать трафик вне VPN | `1` (включён) |
+| `secrets/anthropic_api_key` | Файл с API-ключом Anthropic (безопаснее чем env) | — |
+| `PROJECTS_PATH` | Путь к проектам на хосте (в `.env`) | `./_projects` |
+| `KILLSWITCH` | Kill-switch: блокировать трафик вне VPN (в `.env`) | `1` (включён) |
 
 ## Kill Switch
 
@@ -102,6 +106,29 @@ curl -v https://api.anthropic.com
 docker compose logs claudebox
 ```
 
+## Безопасность
+
+**Что защищено:**
+- API-ключ хранится в файле (`secrets/`), а не в env-переменной — не виден через `docker inspect`
+- Kill-switch блокирует весь трафик вне VPN (включая IPv6)
+- sudo внутри контейнера ограничен только командами VPN и iptables
+- Capabilities: только `NET_ADMIN`, все остальные сброшены (`cap_drop: ALL`)
+- Ресурсные лимиты: 4 GB RAM, 2 CPU, 256 процессов
+- VPN-конфиг монтируется read-only
+
+**Что стоит учитывать:**
+- Claude Code по дизайну выполняет произвольные команды — вредоносный код в проекте может прочитать API-ключ из `/run/secrets/`
+- Директория с проектами монтируется с полным RW-доступом — контейнер может модифицировать/удалять файлы
+- Рекомендуется монтировать только конкретные проекты, а не всю домашнюю директорию
+- Не храните в примонтированных проектах файлы с секретами (`.env`, ключи, токены)
+
+**Файлы, которые НЕЛЬЗЯ коммитить:**
+- `secrets/` — API-ключ
+- `configs/amnezia.conf` — VPN-ключи
+- `.env` — пути и настройки
+
+Все перечисленные файлы добавлены в `.gitignore`.
+
 ## Структура проекта
 
 ```
@@ -114,5 +141,6 @@ claudebox/
 │   └── health-check.sh     # Диагностика VPN и API
 ├── configs/
 │   └── amnezia.conf.example  # Пример конфига VPN
+├── secrets/                # (gitignored) API-ключ
 └── README.md
 ```

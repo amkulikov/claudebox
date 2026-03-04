@@ -1,5 +1,6 @@
 .env
 configs/amnezia.conf
+secrets/
 docker-compose.override.yml
 _projects/
 .DS_Store

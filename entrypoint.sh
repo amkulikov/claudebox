@@ -16,6 +16,12 @@ error()   { echo -e "${RED}[claudebox] ✗${RESET} $1"; }
 
 AWG_CONF="/etc/amnezia/awg0.conf"
 
+# ─── Load API key from secret file if available ─────────────────────────────
+if [[ -z "${ANTHROPIC_API_KEY:-}" && -f "${ANTHROPIC_API_KEY_FILE:-/run/secrets/anthropic_api_key}" ]]; then
+    ANTHROPIC_API_KEY=$(cat "${ANTHROPIC_API_KEY_FILE}")
+    export ANTHROPIC_API_KEY
+fi
+
 # ─── VPN Setup ──────────────────────────────────────────────────────────────
 start_vpn() {
     if [[ ! -f "$AWG_CONF" ]]; then

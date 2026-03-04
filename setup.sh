@@ -151,7 +151,9 @@ declare -A env_vars
 
 if [[ "$auth_choice" == "1" ]]; then
     while true; do
-        api_key=$(ask "Paste your ANTHROPIC_API_KEY")
+        echo -ne "  Paste your ANTHROPIC_API_KEY (input is hidden): "
+        read -rs api_key
+        echo ""
 
         if [[ -z "$api_key" ]]; then
             error "API key cannot be empty"
@@ -166,8 +168,12 @@ if [[ "$auth_choice" == "1" ]]; then
             fi
         fi
 
-        env_vars[ANTHROPIC_API_KEY]="$api_key"
-        success "API key will be saved to .env"
+        # Store API key as a file (more secure than env var — not visible in docker inspect)
+        local secrets_dir="$SCRIPT_DIR/secrets"
+        mkdir -p "$secrets_dir"
+        echo -n "$api_key" > "$secrets_dir/anthropic_api_key"
+        chmod 600 "$secrets_dir/anthropic_api_key"
+        success "API key saved to secrets/anthropic_api_key"
         break
     done
 else
