@@ -25,7 +25,7 @@ fi
 
 # Читаем из файла секрета и инжектим только в окружение Claude
 SECRET_FILE="${ANTHROPIC_API_KEY_FILE:-/run/secrets/anthropic_api_key}"
-if [[ -f "$SECRET_FILE" && -r "$SECRET_FILE" ]]; then
+if [[ -f "$SECRET_FILE" && -s "$SECRET_FILE" ]]; then
     exec env ANTHROPIC_API_KEY="$(cat "$SECRET_FILE")" "$REAL_CLAUDE" "$@"
 fi
 

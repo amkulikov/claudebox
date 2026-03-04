@@ -42,6 +42,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         cd / && rm -rf /tmp/amneziawg-tools-master && \
         apt-get purge -y build-essential && apt-get autoremove -y \
     ) \
+    && apt-get purge -y software-properties-common && apt-get autoremove -y \
     && rm -rf /var/lib/apt/lists/*
 
 # Проверяем, что хотя бы один WG-инструмент установлен

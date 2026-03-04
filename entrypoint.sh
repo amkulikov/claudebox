@@ -81,7 +81,7 @@ setup_killswitch() {
 
     if [[ -z "$endpoint_raw" ]]; then
         warn "Не удалось определить адрес VPN-сервера, пропускаем kill switch"
-        return
+        return 1
     fi
 
     # Парсим хост и порт (поддержка IPv6: [2001:db8::1]:51820)

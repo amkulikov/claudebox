@@ -166,9 +166,9 @@ if ! docker info &>/dev/null; then
 fi
 
 # Определяем команду compose один раз
-if docker compose version &>/dev/null 2>&1; then
+if docker compose version &>/dev/null; then
     COMPOSE=(docker compose)
-elif docker-compose version &>/dev/null 2>&1; then
+elif docker-compose version &>/dev/null; then
     COMPOSE=(docker-compose)
 else
     error "docker compose не найден"
@@ -182,7 +182,6 @@ header "[1/6] Настройка VPN"
 echo ""
 
 vpn_enabled=false
-vpn_configured=false
 
 vpn_choice=$(ask_choice "Будете использовать Amnezia VPN для доступа к Claude API?" \
     "Да, у меня есть конфиг AmneziaWG" \
@@ -231,7 +230,6 @@ if [[ "$vpn_choice" == "1" ]]; then
         cp "$vpn_path" "$CONFIGS_DIR/amnezia.conf"
         chmod 600 "$CONFIGS_DIR/amnezia.conf"
         success "Конфиг скопирован в configs/amnezia.conf"
-        vpn_configured=true
         break
     done
 else
@@ -416,7 +414,9 @@ assert_not_symlink "$ENV_FILE"
 _tmp_env=$(mktemp "$SCRIPT_DIR/.env.XXXXXX")
 {
     # Пишем только непустые переменные (кроме обязательных), в алфавитном порядке
-    [[ -n "$_env_CORP_BYPASS" ]] && _write_env_var "CORP_BYPASS" "$_env_CORP_BYPASS"
+    if [[ -n "$_env_CORP_BYPASS" ]]; then
+        _write_env_var "CORP_BYPASS" "$_env_CORP_BYPASS"
+    fi
     _write_env_var "PROJECTS_PATH" "$_env_PROJECTS_PATH"
     _write_env_var "VPN_ENABLED" "$_env_VPN_ENABLED"
 } > "$_tmp_env"
