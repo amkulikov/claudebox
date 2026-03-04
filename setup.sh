@@ -1,12 +1,6 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# ─── Минимальная версия bash (ассоциативные массивы требуют bash 4+) ─────────
-if (( BASH_VERSINFO[0] < 4 )); then
-    echo "Ошибка: требуется bash 4+ (у вас ${BASH_VERSION}). На macOS: brew install bash" >&2
-    exit 1
-fi
-
 # ─── Проверка интерактивного терминала ────────────────────────────────────────
 if [[ ! -t 0 || ! -t 1 ]]; then
     echo "Ошибка: скрипт требует интерактивный терминал (TTY)" >&2
@@ -129,6 +123,16 @@ assert_not_symlink() {
     fi
 }
 
+# ─── Проверка наличия элемента в массиве (bash 3.2 совместимо) ───────────────
+array_contains() {
+    local needle="$1"; shift
+    local item
+    for item in "$@"; do
+        [[ "$item" == "$needle" ]] && return 0
+    done
+    return 1
+}
+
 # ─── Валидация домена (для CORP_BYPASS) ─────────────────────────────────────
 validate_domain() {
     local d="$1"
@@ -247,13 +251,13 @@ auth_choice=$(ask_choice "Как хотите авторизоваться в Cl
     "Через браузер (после запуска контейнера)")
 
 # Собираем значения .env (пишем всё разом в конце, чтобы не было частичной записи)
-declare -A env_vars
+_env_VPN_ENABLED="0"
+_env_CORP_BYPASS=""
+_env_PROJECTS_PATH=""
 
 # Сохраняем режим VPN
 if $vpn_enabled; then
-    env_vars[VPN_ENABLED]="1"
-else
-    env_vars[VPN_ENABLED]="0"
+    _env_VPN_ENABLED="1"
 fi
 
 if [[ "$auth_choice" == "1" ]]; then
@@ -336,7 +340,7 @@ if $vpn_enabled; then
 
     if [[ ${#corp_domains[@]} -gt 0 ]]; then
         corp_list=$(IFS=,; echo "${corp_domains[*]}")
-        env_vars[CORP_BYPASS]="$corp_list"
+        _env_CORP_BYPASS="$corp_list"
         success "Корпоративный bypass: ${corp_list}"
         dim "  Эти домены будут маршрутизироваться через хост"
     else
@@ -389,26 +393,32 @@ if [[ ! -d "$projects_path" ]]; then
     fi
 fi
 
-env_vars[PROJECTS_PATH]="$projects_path"
+_env_PROJECTS_PATH="$projects_path"
 success "Будет смонтировано: $projects_path → /home/claude/projects"
 
 # ─── Запись .env файла (атомарно через temp + mv) ────────────────────────────
+# Хелпер: экранирование и запись одной переменной
+_write_env_var() {
+    local key="$1" val="$2"
+    # Запрет переносов строк в значениях (ломают формат .env)
+    if [[ "$val" == *$'\n'* || "$val" == *$'\r'* ]]; then
+        val="${val//$'\n'/ }"
+        val="${val//$'\r'/}"
+        warn "Переносы строк удалены из значения $key"
+    fi
+    # Экранируем обратные слеши и кавычки для формата .env
+    val="${val//\\/\\\\}"
+    val="${val//\"/\\\"}"
+    echo "${key}=\"${val}\""
+}
+
 assert_not_symlink "$ENV_FILE"
 _tmp_env=$(mktemp "$SCRIPT_DIR/.env.XXXXXX")
 {
-    for key in $(printf '%s\n' "${!env_vars[@]}" | sort); do
-        val="${env_vars[$key]}"
-        # Запрет переносов строк в значениях (ломают формат .env)
-        if [[ "$val" == *$'\n'* || "$val" == *$'\r'* ]]; then
-            val="${val//$'\n'/ }"
-            val="${val//$'\r'/}"
-            warn "Переносы строк удалены из значения $key"
-        fi
-        # Экранируем обратные слеши и кавычки для формата .env
-        val="${val//\\/\\\\}"
-        val="${val//\"/\\\"}"
-        echo "${key}=\"${val}\""
-    done
+    # Пишем только непустые переменные (кроме обязательных), в алфавитном порядке
+    [[ -n "$_env_CORP_BYPASS" ]] && _write_env_var "CORP_BYPASS" "$_env_CORP_BYPASS"
+    _write_env_var "PROJECTS_PATH" "$_env_PROJECTS_PATH"
+    _write_env_var "VPN_ENABLED" "$_env_VPN_ENABLED"
 } > "$_tmp_env"
 chmod 600 "$_tmp_env"
 mv -f "$_tmp_env" "$ENV_FILE"
@@ -442,7 +452,7 @@ if [[ ${#detected_paths[@]} -gt 0 ]]; then
     echo "" >&2
 
     # Отслеживаем выбранные (по умолчанию все выбраны)
-    declare -A selected
+    selected=()
     for i in "${!detected_paths[@]}"; do
         selected[$i]=1
     done
@@ -594,21 +604,18 @@ while [[ "$add_more" == "1" ]]; do
 done
 
 # ── 5c. Дедупликация и генерация файлов исключений ───────────────────────────
-declare -A seen_ignore seen_overlay
 unique_claudeignore=()
 unique_overlay=()
 if [[ ${#claudeignore_entries[@]} -gt 0 ]]; then
     for entry in "${claudeignore_entries[@]}"; do
-        if [[ -z "${seen_ignore[$entry]+x}" ]]; then
-            seen_ignore[$entry]=1
+        if ! array_contains "$entry" "${unique_claudeignore[@]+"${unique_claudeignore[@]}"}"; then
             unique_claudeignore+=("$entry")
         fi
     done
 fi
 if [[ ${#overlay_entries[@]} -gt 0 ]]; then
     for entry in "${overlay_entries[@]}"; do
-        if [[ -z "${seen_overlay[$entry]+x}" ]]; then
-            seen_overlay[$entry]=1
+        if ! array_contains "$entry" "${unique_overlay[@]+"${unique_overlay[@]}"}"; then
             unique_overlay+=("$entry")
         fi
     done
@@ -629,7 +636,8 @@ if [[ ${#unique_claudeignore[@]} -gt 0 ]]; then
         echo "# Пути, исключённые из поиска/чтения Claude Code"
         if [[ ${#existing_entries[@]} -gt 0 ]]; then
             for existing in "${existing_entries[@]}"; do
-                if [[ -z "${seen_ignore[$existing]+x}" ]]; then
+                # Не дублируем записи, которые уже есть в новых
+                if ! array_contains "$existing" "${unique_claudeignore[@]+"${unique_claudeignore[@]}"}"; then
                     echo "$existing"
                 fi
             done

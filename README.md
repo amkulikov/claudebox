@@ -38,7 +38,7 @@ health-check
 ## Требования
 
 - Docker (с Docker Compose)
-- bash 4+ (macOS: `brew install bash`)
+- bash 3.2+ (встроенный bash на macOS работает)
 - API-ключ Anthropic или аккаунт для интерактивного логина
 - (Опционально) Конфиг AmneziaWG — если нужен VPN для доступа к Claude API
 
