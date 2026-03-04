@@ -2,7 +2,7 @@ FROM ubuntu:24.04
 
 ENV DEBIAN_FRONTEND=noninteractive
 
-# ─── System packages ────────────────────────────────────────────────────────
+# ─── Системные пакеты ────────────────────────────────────────────────────────
 RUN apt-get update && apt-get install -y --no-install-recommends \
         curl \
         ca-certificates \
@@ -18,22 +18,22 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         gosu \
     && rm -rf /var/lib/apt/lists/*
 
-# ─── Node.js 22 LTS ─────────────────────────────────────────────────────────
+# ─── Node.js 22 LTS ──────────────────────────────────────────────────────────
 RUN curl -fsSL https://deb.nodesource.com/setup_22.x | bash - \
     && apt-get install -y --no-install-recommends nodejs \
     && rm -rf /var/lib/apt/lists/*
 
-# ─── AmneziaWG ──────────────────────────────────────────────────────────────
+# ─── AmneziaWG ───────────────────────────────────────────────────────────────
 RUN curl -fsSL https://raw.githubusercontent.com/amnezia-vpn/amneziawg-linux-kernel-module/master/install.sh | bash \
-    || echo "WARNING: AmneziaWG kernel module install failed (expected in Docker build)"
-# Install amneziawg-tools (awg, awg-quick)
+    || echo "ПРЕДУПРЕЖДЕНИЕ: установка модуля ядра AmneziaWG не удалась (ожидаемо при сборке Docker)"
+# Установка amneziawg-tools (awg, awg-quick)
 RUN apt-get update && apt-get install -y --no-install-recommends \
         software-properties-common \
     && add-apt-repository -y ppa:amnezia/ppa \
     && apt-get update \
     && apt-get install -y --no-install-recommends amneziawg-tools \
     || ( \
-        # Fallback: build from source if PPA not available
+        # Фолбэк: сборка из исходников, если PPA недоступен
         apt-get install -y --no-install-recommends build-essential && \
         cd /tmp && \
         curl -fsSL https://github.com/amnezia-vpn/amneziawg-tools/archive/refs/heads/master.tar.gz | tar xz && \
@@ -44,36 +44,36 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     ) \
     && rm -rf /var/lib/apt/lists/*
 
-# Verify at least one WG tool is available
-RUN which awg-quick || which wg-quick || (echo "ERROR: No WireGuard tools installed" && exit 1)
+# Проверяем, что хотя бы один WG-инструмент установлен
+RUN which awg-quick || which wg-quick || (echo "ОШИБКА: WireGuard-инструменты не установлены" && exit 1)
 
-# ─── Claude Code CLI ────────────────────────────────────────────────────────
+# ─── Claude Code CLI ─────────────────────────────────────────────────────────
 RUN npm install -g @anthropic-ai/claude-code@latest
 
-# ─── User setup (no sudo — entrypoint runs as root, drops to claude via gosu)
+# ─── Создание пользователя (без sudo — entrypoint от root, сброс до claude через gosu)
 RUN useradd -m -s /bin/bash claude
 
-# ─── Directories with correct ownership ─────────────────────────────────────
+# ─── Директории с правильными правами ─────────────────────────────────────────
 RUN mkdir -p /home/claude/projects /home/claude/.claude \
     && chown -R claude:claude /home/claude/projects /home/claude/.claude
 
-# ─── Health check script ────────────────────────────────────────────────────
+# ─── Скрипт диагностики ──────────────────────────────────────────────────────
 COPY scripts/health-check.sh /usr/local/bin/health-check
 RUN chmod +x /usr/local/bin/health-check
 
-# ─── Claude wrapper (injects API key per-process, not globally) ─────────────
+# ─── Обёртка для Claude (инжектит API-ключ per-process, не глобально) ─────────
 COPY scripts/claude-wrapper.sh /usr/local/bin/claude-safe
 RUN chmod +x /usr/local/bin/claude-safe
 
-# ─── Entrypoint ─────────────────────────────────────────────────────────────
+# ─── Entrypoint ──────────────────────────────────────────────────────────────
 COPY entrypoint.sh /entrypoint.sh
 RUN chmod +x /entrypoint.sh
 
-# ─── Config directory ───────────────────────────────────────────────────────
+# ─── Директория для конфигов ──────────────────────────────────────────────────
 RUN mkdir -p /etc/amnezia && chmod 700 /etc/amnezia
 
 WORKDIR /home/claude/projects
 
-# Entrypoint runs as root to set up VPN/killswitch, then drops to claude user
+# Entrypoint запускается от root для настройки VPN/killswitch, затем сбрасывает привилегии до claude
 ENTRYPOINT ["/entrypoint.sh"]
 CMD ["bash"]

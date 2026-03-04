@@ -1,13 +1,13 @@
-# AmneziaWG configuration file
-# Replace all values with your actual server configuration.
+# Конфигурационный файл AmneziaWG
+# Замените все значения на реальные данные вашего сервера.
 #
-# How to get this config:
-#   1. Open Amnezia VPN app
-#   2. Go to Settings → Servers → your server
-#   3. Share → Export as WireGuard/AmneziaWG config
-#   4. Save the file and point setup.sh to it
+# Как получить этот конфиг:
+#   1. Откройте приложение Amnezia VPN
+#   2. Настройки → Серверы → ваш сервер
+#   3. Поделиться → Экспорт как WireGuard/AmneziaWG конфиг
+#   4. Сохраните файл и укажите путь к нему в setup.sh
 #
-# Or create manually on your VPS — see:
+# Или создайте вручную на VPS — см.:
 #   https://docs.amnezia.org/
 
 [Interface]
@@ -15,7 +15,7 @@ PrivateKey = YOUR_PRIVATE_KEY_HERE
 Address = 10.8.1.2/32
 DNS = 1.1.1.1, 8.8.8.8
 
-# AmneziaWG obfuscation parameters (optional for standard WireGuard)
+# Параметры обфускации AmneziaWG (необязательны для стандартного WireGuard)
 Jc = 4
 Jmin = 40
 Jmax = 70
