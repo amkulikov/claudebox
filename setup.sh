@@ -52,7 +52,8 @@ ask() {
     else
         echo -ne "  ${prompt}: " >&2
     fi
-    read -r answer
+    # -e включает readline (Tab-completion для путей и навигация стрелками)
+    read -e -r answer
     echo "${answer:-$default}"
 }
 
@@ -96,19 +97,31 @@ clean_path() {
 
 # ─── Валидация относительного пути (для YAML и .claudeignore) ────────────────
 # Защита от инъекции в YAML, path traversal и проблемных символов.
+# Возвращает 0 — OK, 1 — ошибка (причина в переменной _path_reject_reason).
 validate_relative_path() {
     local p="$1"
     # Запрет пустых, абсолютных путей, path traversal
-    if [[ -z "$p" || "$p" == /* || "$p" == *".."* ]]; then
+    if [[ -z "$p" ]]; then
+        _path_reject_reason="пустой путь"
+        return 1
+    fi
+    if [[ "$p" == /* ]]; then
+        _path_reject_reason="абсолютный путь (допускаются только относительные)"
+        return 1
+    fi
+    if [[ "$p" == *".."* ]]; then
+        _path_reject_reason="содержит '..' (path traversal)"
         return 1
     fi
     # Запрет переносов строк, NUL
     if [[ "$p" == *$'\n'* || "$p" == *$'\r'* || "$p" == *$'\0'* ]]; then
+        _path_reject_reason="содержит управляющие символы"
         return 1
     fi
     # Разрешаем только безопасные символы: буквы, цифры, точка, _, /, -, пробел, @, +
     local safe_pattern='^[A-Za-z0-9._/@+ -]+$'
     if [[ ! "$p" =~ $safe_pattern ]]; then
+        _path_reject_reason="содержит спецсимволы (допускаются: буквы, цифры, . _ / @ + - пробел)"
         return 1
     fi
     return 0
@@ -509,7 +522,7 @@ if [[ ${#detected_paths[@]} -gt 0 ]]; then
         for i in "${!detected_paths[@]}"; do
             if [[ "${selected[$i]}" == "1" ]]; then
                 if ! validate_relative_path "${detected_paths[$i]}"; then
-                    warn "Пропущен небезопасный путь: ${detected_paths[$i]}"
+                    warn "Путь '${detected_paths[$i]}' пропущен: $_path_reject_reason"
                     continue
                 fi
                 claudeignore_entries+=("${detected_paths[$i]}")
@@ -526,8 +539,8 @@ fi
 
 # ── 5b. Ручной поиск ─────────────────────────────────────────────────────────
 echo "" >&2
-add_more=$(ask_choice "Искать ещё пути для скрытия?" \
-    "Да, поиск по имени" \
+add_more=$(ask_choice "Добавить пути в .claudeignore вручную?" \
+    "Да, найти по имени файла/папки" \
     "Нет, продолжить")
 
 while [[ "$add_more" == "1" ]]; do
@@ -576,7 +589,7 @@ while [[ "$add_more" == "1" ]]; do
                     full_entry="$projects_path/$entry"
 
                     if ! validate_relative_path "$entry"; then
-                        warn "Пропущен небезопасный путь: $entry"
+                        warn "Путь '$entry' пропущен: $_path_reject_reason"
                         continue
                     fi
 

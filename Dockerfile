@@ -10,7 +10,6 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         iptables \
         ip6tables \
         iproute2 \
-        dns-root-data \
         dnsutils \
         jq \
         git \
