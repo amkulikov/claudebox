@@ -6,6 +6,9 @@ services:
       - NET_ADMIN
       - SETUID
       - SETGID
+      - CHOWN
+      - FOWNER
+      - DAC_OVERRIDE
     cap_drop:
       - ALL
     devices:

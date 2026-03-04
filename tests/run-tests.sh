@@ -342,6 +342,7 @@ assert_contains "базовый образ ubuntu" "ubuntu:24.04" "$dockerfile_c
 assert_contains "устанавливает gosu" "gosu" "$dockerfile_content"
 assert_contains "устанавливает claude-code" "claude-code" "$dockerfile_content"
 assert_contains "создаёт пользователя claude" "useradd" "$dockerfile_content"
+assert_contains "home dir 755 (Ubuntu 24.04 default 0750)" "chmod 755 /home/claude" "$dockerfile_content"
 assert_contains "копирует entrypoint" "COPY entrypoint.sh" "$dockerfile_content"
 assert_contains "WORKDIR проекты" "/home/claude/projects" "$dockerfile_content"
 
@@ -355,6 +356,9 @@ compose_content=$(cat "$PROJECT_DIR/docker-compose.yml")
 assert_contains "capability NET_ADMIN" "NET_ADMIN" "$compose_content"
 assert_contains "capability SETUID для gosu" "SETUID" "$compose_content"
 assert_contains "capability SETGID для gosu" "SETGID" "$compose_content"
+assert_contains "capability CHOWN для entrypoint" "CHOWN" "$compose_content"
+assert_contains "capability FOWNER для entrypoint" "FOWNER" "$compose_content"
+assert_contains "capability DAC_OVERRIDE для entrypoint" "DAC_OVERRIDE" "$compose_content"
 assert_contains "именованный том claude-config" "claude-config" "$compose_content"
 assert_contains "no-new-privileges" "no-new-privileges" "$compose_content"
 assert_contains "лимит памяти" "memory:" "$compose_content"

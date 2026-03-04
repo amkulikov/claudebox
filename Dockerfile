@@ -50,7 +50,8 @@ RUN which awg-quick || which wg-quick || (echo "ОШИБКА: WireGuard-инст
 RUN npm install -g @anthropic-ai/claude-code@latest
 
 # ─── Создание пользователя (без sudo — entrypoint от root, сброс до claude через gosu)
-RUN useradd -m -s /bin/bash claude
+RUN useradd -m -s /bin/bash claude \
+    && chmod 755 /home/claude
 
 # ─── Директории с правильными правами ─────────────────────────────────────────
 RUN mkdir -p /home/claude/projects /home/claude/.claude \
