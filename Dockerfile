@@ -16,11 +16,6 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         gosu \
     && rm -rf /var/lib/apt/lists/*
 
-# ─── Node.js 22 LTS ──────────────────────────────────────────────────────────
-RUN curl -fsSL https://deb.nodesource.com/setup_22.x | bash - \
-    && apt-get install -y --no-install-recommends nodejs \
-    && rm -rf /var/lib/apt/lists/*
-
 # ─── AmneziaWG ───────────────────────────────────────────────────────────────
 RUN curl -fsSL https://raw.githubusercontent.com/amnezia-vpn/amneziawg-linux-kernel-module/master/install.sh | bash \
     || echo "ПРЕДУПРЕЖДЕНИЕ: установка модуля ядра AmneziaWG не удалась (ожидаемо при сборке Docker)"
@@ -46,8 +41,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # Проверяем, что хотя бы один WG-инструмент установлен
 RUN which awg-quick || which wg-quick || (echo "ОШИБКА: WireGuard-инструменты не установлены" && exit 1)
 
-# ─── Claude Code CLI ─────────────────────────────────────────────────────────
-RUN npm install -g @anthropic-ai/claude-code@latest
+# ─── Claude Code CLI (native installer, npm deprecated) ─────────────────────
+RUN curl -fsSL https://claude.ai/install.sh | bash \
+    && ln -sf /root/.local/bin/claude /usr/local/bin/claude
 
 # ─── Создание пользователя (без sudo — entrypoint от root, сброс до claude через gosu)
 RUN useradd -m -s /bin/bash claude \

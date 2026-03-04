@@ -4,8 +4,8 @@
 
 REAL_CLAUDE="$(which -a claude 2>/dev/null | grep -Fv "$0" | head -1)"
 if [[ -z "$REAL_CLAUDE" ]]; then
-    # Фолбэк: ищем claude в стандартных путях npm
-    for candidate in /usr/local/bin/claude /usr/bin/claude; do
+    # Фолбэк: ищем claude в стандартных путях (native installer + npm legacy)
+    for candidate in /usr/local/bin/claude /home/claude/.local/bin/claude /usr/bin/claude; do
         if [[ -x "$candidate" && "$candidate" != "$0" ]]; then
             REAL_CLAUDE="$candidate"
             break

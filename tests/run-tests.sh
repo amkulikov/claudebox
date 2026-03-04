@@ -340,7 +340,7 @@ assert_file_exists "Dockerfile существует" "$PROJECT_DIR/Dockerfile"
 dockerfile_content=$(cat "$PROJECT_DIR/Dockerfile")
 assert_contains "базовый образ ubuntu" "ubuntu:24.04" "$dockerfile_content"
 assert_contains "устанавливает gosu" "gosu" "$dockerfile_content"
-assert_contains "устанавливает claude-code" "claude-code" "$dockerfile_content"
+assert_contains "устанавливает claude-code (native)" "claude.ai/install.sh" "$dockerfile_content"
 assert_contains "создаёт пользователя claude" "useradd" "$dockerfile_content"
 assert_contains "home dir 755 (Ubuntu 24.04 default 0750)" "chmod 755 /home/claude" "$dockerfile_content"
 assert_contains "копирует entrypoint" "COPY entrypoint.sh" "$dockerfile_content"
