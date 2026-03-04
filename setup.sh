@@ -136,6 +136,14 @@ assert_not_symlink() {
     fi
 }
 
+# ─── Длина массива (bash 3.2 совместимо: пустой массив + set -u не падает) ────
+# Использование: if (( $(arr_len arr_name) > 0 )); then ...
+arr_len() {
+    local _n
+    eval "_n=\${$1[@]+\${#$1[@]}}"
+    echo "${_n:-0}"
+}
+
 # ─── Проверка наличия элемента в массиве (bash 3.2 совместимо) ───────────────
 array_contains() {
     local needle="$1"; shift
@@ -349,7 +357,7 @@ if $vpn_enabled; then
         done
     fi
 
-    if [[ ${#corp_domains[@]} -gt 0 ]]; then
+    if [[ $(arr_len corp_domains) -gt 0 ]]; then
         corp_list=$(IFS=,; echo "${corp_domains[*]}")
         _env_CORP_BYPASS="$corp_list"
         success "Корпоративный bypass: ${corp_list}"
@@ -520,7 +528,7 @@ for pattern in "${SUSPECT_PATTERNS[@]}"; do
     done
 done
 
-if [[ ${#detected_paths[@]} -gt 0 ]]; then
+if [[ $(arr_len detected_paths) -gt 0 ]]; then
     echo -e "  ${YELLOW}Найдены потенциально чувствительные пути:${RESET}" >&2
     echo "" >&2
 
@@ -551,7 +559,7 @@ if [[ ${#detected_paths[@]} -gt 0 ]]; then
             for i in "${!detected_paths[@]}"; do selected[$i]=0; done
         elif [[ "$toggle_input" =~ ^[0-9]+$ ]] && (( toggle_input >= 1 )); then
             idx=$((toggle_input - 1))
-            if (( idx < ${#detected_paths[@]} )); then
+            if (( idx < $(arr_len detected_paths) )); then
                 if [[ "${selected[$idx]}" == "1" ]]; then
                     selected[$idx]=0
                 else
@@ -624,14 +632,14 @@ while [[ "$add_more" == "1" ]]; do
         done < <(find "$proj_path" -maxdepth 5 -name ".git" -prune -o -iname "*${safe_term}*" -print 2>/dev/null | head -20)
     done
 
-    if [[ ${#search_results[@]} -eq 0 ]]; then
+    if [[ $(arr_len search_results) -eq 0 ]]; then
         warn "Нет совпадений для '$search_term'"
         add_more=$(ask_choice "Искать ещё?" "Да" "Нет, продолжить")
         continue
     fi
 
     echo "" >&2
-    echo -e "  ${CYAN}Найдено ${#search_results[@]} совпадений:${RESET}" >&2
+    echo -e "  ${CYAN}Найдено $(arr_len search_results) совпадений:${RESET}" >&2
     for i in "${!search_results[@]}"; do
         echo -e "    ${BOLD}$((i+1)).${RESET} ${search_results[$i]}" >&2
     done
@@ -646,7 +654,7 @@ while [[ "$add_more" == "1" ]]; do
             pick=$(echo "$pick" | tr -d ' ')
             if [[ "$pick" =~ ^[0-9]+$ ]] && (( pick >= 1 )); then
                 idx=$((pick - 1))
-                if (( idx < ${#search_results[@]} )); then
+                if (( idx < $(arr_len search_results) )); then
                     entry="${search_results[$idx]}"
                     full_entry="${project_paths[0]}/$entry"
 
@@ -681,14 +689,14 @@ done
 # ── 5c. Дедупликация и генерация файлов исключений ───────────────────────────
 unique_claudeignore=()
 unique_overlay=()
-if [[ ${#claudeignore_entries[@]} -gt 0 ]]; then
+if [[ $(arr_len claudeignore_entries) -gt 0 ]]; then
     for entry in "${claudeignore_entries[@]}"; do
         if ! array_contains "$entry" "${unique_claudeignore[@]+"${unique_claudeignore[@]}"}"; then
             unique_claudeignore+=("$entry")
         fi
     done
 fi
-if [[ ${#overlay_entries[@]} -gt 0 ]]; then
+if [[ $(arr_len overlay_entries) -gt 0 ]]; then
     for entry in "${overlay_entries[@]}"; do
         if ! array_contains "$entry" "${unique_overlay[@]+"${unique_overlay[@]}"}"; then
             unique_overlay+=("$entry")
@@ -696,7 +704,7 @@ if [[ ${#overlay_entries[@]} -gt 0 ]]; then
     done
 fi
 
-if [[ ${#unique_claudeignore[@]} -gt 0 ]]; then
+if [[ $(arr_len unique_claudeignore) -gt 0 ]]; then
     claudeignore_file="${project_paths[0]}/.claudeignore"
     # Сохраняем существующие записи
     existing_entries=()
@@ -709,7 +717,7 @@ if [[ ${#unique_claudeignore[@]} -gt 0 ]]; then
     {
         echo "# Управляется через claudebox setup.sh"
         echo "# Пути, исключённые из поиска/чтения Claude Code"
-        if [[ ${#existing_entries[@]} -gt 0 ]]; then
+        if [[ $(arr_len existing_entries) -gt 0 ]]; then
             for existing in "${existing_entries[@]}"; do
                 # Не дублируем записи, которые уже есть в новых
                 if ! array_contains "$existing" "${unique_claudeignore[@]+"${unique_claudeignore[@]}"}"; then
@@ -721,12 +729,15 @@ if [[ ${#unique_claudeignore[@]} -gt 0 ]]; then
             echo "$entry"
         done
     } > "$claudeignore_file"
-    success "Обновлён $claudeignore_file (${#unique_claudeignore[@]} новых записей)"
+    success "Обновлён $claudeignore_file ($(arr_len unique_claudeignore) новых записей)"
 fi
 
 # Генерируем docker-compose.override.yml если есть доп. проекты или tmpfs-оверлеи
 _need_override=false
-if [[ ${#_extra_project_paths[@]} -gt 0 || ${#unique_overlay[@]} -gt 0 ]]; then
+# Bash 3.2 (macOS): ${#arr[@]} на пустом массиве с set -u = unbound variable
+_n_extra=$(arr_len _extra_project_paths)
+_n_overlay=$(arr_len unique_overlay)
+if (( _n_extra > 0 || _n_overlay > 0 )); then
     _need_override=true
 fi
 
@@ -745,14 +756,14 @@ if $_need_override; then
         echo "  claudebox:"
         echo "    volumes:"
         # Дополнительные проекты
-        for extra_path in "${_extra_project_paths[@]}"; do
+        for extra_path in "${_extra_project_paths[@]+"${_extra_project_paths[@]}"}"; do
             mount_name=$(basename "$extra_path")
             escaped_src="${extra_path//\\/\\\\}"
             escaped_src="${escaped_src//\"/\\\"}"
             echo "      - \"${escaped_src}:/home/claude/projects/${mount_name}\""
         done
         # tmpfs-оверлеи для скрытия чувствительных директорий
-        for entry in "${unique_overlay[@]}"; do
+        for entry in "${unique_overlay[@]+"${unique_overlay[@]}"}"; do
             escaped="${entry//\\/\\\\}"
             escaped="${escaped//\"/\\\"}"
             echo "      - type: tmpfs"
@@ -761,13 +772,16 @@ if $_need_override; then
     } > "$_tmp_override"
     chmod 644 "$_tmp_override"
     mv -f "$_tmp_override" "$override_file"
-    local parts=()
-    [[ ${#_extra_project_paths[@]} -gt 0 ]] && parts+=("${#_extra_project_paths[@]} доп. проект(ов)")
-    [[ ${#unique_overlay[@]} -gt 0 ]] && parts+=("${#unique_overlay[@]} tmpfs-оверлей(ев)")
-    success "Создан docker-compose.override.yml: $(IFS=', '; echo "${parts[*]}")"
+    _parts=""
+    (( _n_extra > 0 )) && _parts="${_n_extra} доп. проект(ов)"
+    if (( _n_overlay > 0 )); then
+        [[ -n "$_parts" ]] && _parts="$_parts, "
+        _parts="${_parts}${_n_overlay} tmpfs-оверлей(ев)"
+    fi
+    success "Создан docker-compose.override.yml: $_parts"
 fi
 
-if [[ ${#claudeignore_entries[@]} -eq 0 ]]; then
+if [[ $(arr_len claudeignore_entries) -eq 0 ]]; then
     dim "  Исключения не настроены. Можно добавить позже:"
     dim "    Мягкий: создайте .claudeignore в проекте"
     dim "    Жёсткий: добавьте tmpfs-тома в docker-compose.override.yml"

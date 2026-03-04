@@ -7,13 +7,18 @@ on:
     branches: [main]
 
 jobs:
-  test:
+  unit:
+    name: Unit tests
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-
-      - name: Run tests
+      - name: Run unit tests
         run: ./tests/run-tests.sh
 
-      - name: Validate Dockerfile builds
-        run: docker build --check .
+  docker:
+    name: Docker integration tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Run Docker tests
+        run: ./tests/run-docker-tests.sh
