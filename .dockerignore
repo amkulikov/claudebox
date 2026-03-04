@@ -1,0 +1,20 @@
+# Секреты и конфиги с ключами — не должны попадать в build context
+secrets/
+configs/amnezia.conf
+.env
+docker-compose.override.yml
+docker-compose.override.yml.bak.*
+
+# Проекты пользователя
+_projects/
+
+# Git и редакторы
+.git
+.gitignore
+.DS_Store
+*.swp
+*.swo
+
+# Документация (не нужна в образе)
+README.md
+LICENSE

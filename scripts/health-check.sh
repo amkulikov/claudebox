@@ -136,4 +136,5 @@ else
 fi
 echo ""
 
-exit "$errors"
+# Exit code > 125 имеет спец. значение в Docker (126=not found, 137=SIGKILL)
+exit $(( errors > 0 ? 1 : 0 ))

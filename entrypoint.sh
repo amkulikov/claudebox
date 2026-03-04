@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-set -uo pipefail
+set -euo pipefail
 
 RED='\033[0;31m'
 GREEN='\033[0;32m'
@@ -77,11 +77,11 @@ setup_killswitch() {
 
     # Получаем адрес и порт VPN-сервера для разрешения начального подключения
     local endpoint_raw endpoint endpoint_port
-    endpoint_raw=$(grep -i '^Endpoint' "$AWG_CONF" | head -1 | awk -F'=' '{print $2}' | tr -d ' ')
+    endpoint_raw=$(grep -i '^Endpoint' "$AWG_CONF" | head -1 | sed 's/^[^=]*= *//')
 
     if [[ -z "$endpoint_raw" ]]; then
         warn "Не удалось определить адрес VPN-сервера, пропускаем kill switch"
-        return
+        return 1
     fi
 
     # Парсим хост и порт (поддержка IPv6: [2001:db8::1]:51820)
@@ -100,7 +100,7 @@ setup_killswitch() {
 
     # Парсим DNS-серверы из VPN-конфига для ограничения DNS-трафика
     local dns_servers
-    dns_servers=$(grep -i '^DNS' "$AWG_CONF" | head -1 | awk -F'=' '{print $2}' | tr ',' '\n' | tr -d ' ')
+    dns_servers=$(grep -i '^DNS' "$AWG_CONF" | head -1 | sed 's/^[^=]*= *//' | tr ',' '\n' | tr -d ' ')
 
     # Сначала ставим политику DROP (без окна утечки трафика)
     iptables -P OUTPUT DROP 2>/dev/null || true
@@ -110,7 +110,7 @@ setup_killswitch() {
     ip6tables -P OUTPUT DROP 2>/dev/null || true
     ip6tables -F OUTPUT 2>/dev/null || true
     ip6tables -A OUTPUT -o lo -j ACCEPT
-    ip6tables -A OUTPUT -j DROP
+    # Явное правило DROP не нужно — политика уже DROP
 
     # IPv4: разрешаем только VPN-трафик
     local iface_name
@@ -244,8 +244,8 @@ else
     vpn_ok=false
     if start_vpn; then
         vpn_ok=true
-        setup_killswitch
-        setup_corp_bypass
+        setup_killswitch || warn "Kill switch не настроен — см. ошибки выше"
+        setup_corp_bypass || warn "Корпоративный bypass не настроен — см. ошибки выше"
     fi
 
     if $vpn_ok; then
