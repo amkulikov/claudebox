@@ -21,7 +21,8 @@ git clone <repo-url> && cd claudebox
 2. Попросит путь к вашему AmneziaWG конфигу
 3. Настроит аутентификацию Claude (API-ключ или browser login)
 4. Спросит путь к директории с проектами
-5. Соберёт и запустит контейнер
+5. Настроит исключения (скрытие директорий от Claude Code)
+6. Соберёт и запустит контейнер
 
 ## Ручная настройка
 
@@ -72,6 +73,42 @@ health-check
 | `secrets/anthropic_api_key` | Файл с API-ключом Anthropic (безопаснее чем env) | — |
 | `PROJECTS_PATH` | Путь к проектам на хосте (в `.env`) | `./_projects` |
 | `KILLSWITCH` | Kill-switch: блокировать трафик вне VPN (в `.env`) | `1` (включён) |
+
+## Скрытие директорий
+
+Два уровня скрытия контента от Claude Code:
+
+### Soft: `.claudeignore`
+
+Создайте файл `.claudeignore` в корне проектов (или в конкретном проекте). Синтаксис как у `.gitignore`:
+
+```
+# Claude Code не будет искать/читать эти пути
+datafixes/
+*.sql
+secrets/
+```
+
+Claude Code не будет индексировать и читать эти файлы, но они физически доступны через `ls`/`cat` внутри контейнера.
+
+### Hard: tmpfs overlay
+
+Для чувствительных данных — пустой tmpfs монтируется поверх реальной директории. Физически невидимо внутри контейнера.
+
+Настраивается через `setup.sh` (шаг 4) или вручную в `docker-compose.override.yml`:
+
+```yaml
+# docker-compose.override.yml
+services:
+  claudebox:
+    volumes:
+      - type: tmpfs
+        target: /home/claude/projects/myproject/datafixes
+      - type: tmpfs
+        target: /home/claude/projects/myproject/private-data
+```
+
+После изменения override-файла перезапустите контейнер: `docker compose down && docker compose up -d`
 
 ## Kill Switch
 
