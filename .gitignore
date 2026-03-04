@@ -1,0 +1,9 @@
+.env
+configs/amnezia.conf
+secrets/
+docker-compose.override.yml
+docker-compose.override.yml.bak.*
+_projects/
+.DS_Store
+*.swp
+*.swo

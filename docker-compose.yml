@@ -1,0 +1,45 @@
+services:
+  claudebox:
+    build: .
+    container_name: claudebox
+    cap_add:
+      - NET_ADMIN
+    cap_drop:
+      - ALL
+    devices:
+      - /dev/net/tun:/dev/net/tun
+    sysctls:
+      - net.ipv4.conf.all.src_valid_mark=1
+      - net.ipv6.conf.all.disable_ipv6=1
+    volumes:
+      - ./configs/amnezia.conf:/etc/amnezia/awg0.conf:ro
+      - ${PROJECTS_PATH:-./_projects}:/home/claude/projects
+      - claude-config:/home/claude/.claude
+      - ./secrets/anthropic_api_key:/run/secrets/anthropic_api_key:ro
+    env_file:
+      - .env
+    environment:
+      - VPN_ENABLED=${VPN_ENABLED:-1}
+      - KILLSWITCH=${KILLSWITCH:-1}
+      - CORP_BYPASS=${CORP_BYPASS:-}
+      - ANTHROPIC_API_KEY_FILE=/run/secrets/anthropic_api_key
+    # Лимиты ресурсов для защиты хоста
+    deploy:
+      resources:
+        limits:
+          memory: 4g
+          cpus: "2.0"
+    pids_limit: 256
+    security_opt:
+      - no-new-privileges:true
+    stdin_open: true
+    tty: true
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "health-check"]
+      interval: 60s
+      timeout: 10s
+      retries: 3
+
+volumes:
+  claude-config:
