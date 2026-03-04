@@ -113,8 +113,8 @@ validate_relative_path() {
         _path_reject_reason="содержит '..' (path traversal)"
         return 1
     fi
-    # Запрет переносов строк, NUL
-    if [[ "$p" == *$'\n'* || "$p" == *$'\r'* || "$p" == *$'\0'* ]]; then
+    # Запрет переносов строк (NUL невозможен в bash-переменных)
+    if [[ "$p" == *$'\n'* || "$p" == *$'\r'* ]]; then
         _path_reject_reason="содержит управляющие символы"
         return 1
     fi

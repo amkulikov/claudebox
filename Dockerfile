@@ -8,7 +8,6 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         ca-certificates \
         gnupg \
         iptables \
-        ip6tables \
         iproute2 \
         dnsutils \
         jq \
