@@ -126,6 +126,69 @@ setup_killswitch() {
     success "Kill switch active — traffic only through VPN"
 }
 
+# ─── Corporate bypass ────────────────────────────────────────────────────────
+setup_corp_bypass() {
+    local corp_bypass="${CORP_BYPASS:-}"
+    if [[ -z "$corp_bypass" ]]; then
+        return
+    fi
+
+    info "Setting up corporate domain bypass..."
+
+    # Get Docker gateway (traffic to corp goes through host, not VPN)
+    local gateway
+    gateway=$(ip -4 route show default 2>/dev/null | awk '{print $3}' | head -1)
+    if [[ -z "$gateway" ]]; then
+        warn "Cannot determine Docker gateway, skipping corp bypass"
+        return
+    fi
+
+    # Get the Docker bridge interface name
+    local bridge_iface
+    bridge_iface=$(ip -4 route show default 2>/dev/null | awk '{print $5}' | head -1)
+
+    IFS=',' read -ra domains <<< "$corp_bypass"
+    for domain in "${domains[@]}"; do
+        domain=$(echo "$domain" | tr -d '[:space:]')
+        [[ -z "$domain" ]] && continue
+
+        # Resolve domain to IPs (may return multiple)
+        local ips
+        ips=$(dig +short "$domain" 2>/dev/null | grep -E '^[0-9]+\.' || true)
+
+        if [[ -z "$ips" ]]; then
+            # Try wildcard: if *.mycorp.com, resolve mycorp.com
+            local base_domain="${domain#\*.}"
+            if [[ "$base_domain" != "$domain" ]]; then
+                ips=$(dig +short "$base_domain" 2>/dev/null | grep -E '^[0-9]+\.' || true)
+            fi
+        fi
+
+        if [[ -z "$ips" ]]; then
+            warn "Cannot resolve $domain — will retry at first access"
+            continue
+        fi
+
+        while IFS= read -r ip; do
+            [[ -z "$ip" ]] && continue
+            # Route through Docker gateway (host), not through VPN
+            ip route add "$ip/32" via "$gateway" 2>/dev/null || true
+            # Allow in kill-switch
+            if [[ -n "$bridge_iface" ]]; then
+                iptables -A OUTPUT -d "$ip" -o "$bridge_iface" -j ACCEPT 2>/dev/null || true
+            else
+                iptables -A OUTPUT -d "$ip" -j ACCEPT 2>/dev/null || true
+            fi
+        done <<< "$ips"
+
+        success "Bypass: $domain"
+    done
+
+    # Also allow DNS to Docker gateway (host can resolve corp domains via corp VPN)
+    iptables -A OUTPUT -d "$gateway" -p udp --dport 53 -j ACCEPT 2>/dev/null || true
+    iptables -A OUTPUT -d "$gateway" -p tcp --dport 53 -j ACCEPT 2>/dev/null || true
+}
+
 # ─── Check API ───────────────────────────────────────────────────────────────
 check_api() {
     info "Checking Claude API access..."
@@ -153,6 +216,7 @@ vpn_ok=false
 if start_vpn; then
     vpn_ok=true
     setup_killswitch
+    setup_corp_bypass
 fi
 
 if $vpn_ok; then

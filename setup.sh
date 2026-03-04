@@ -96,7 +96,7 @@ echo "  └───────────────────────
 echo -e "${RESET}"
 
 # ─── Prerequisites check ────────────────────────────────────────────────────
-header "[0/5] Checking prerequisites..."
+header "[0/6] Checking prerequisites..."
 
 if ! command -v docker &>/dev/null; then
     error "Docker not found. Install: https://docs.docker.com/get-docker/"
@@ -122,7 +122,7 @@ fi
 success "Docker is installed and running (${COMPOSE[*]})"
 
 # ─── Step 1: VPN ─────────────────────────────────────────────────────────────
-header "[1/5] VPN Configuration"
+header "[1/6] VPN Configuration"
 echo ""
 dim "  You need an AmneziaWG config file from your Amnezia VPN server."
 dim "  It looks like a WireGuard config with extra fields (Jc, Jmin, Jmax, S1, S2, H1-H4)."
@@ -165,7 +165,7 @@ while true; do
 done
 
 # ─── Step 2: Claude Authentication ──────────────────────────────────────────
-header "[2/5] Claude Authentication"
+header "[2/6] Claude Authentication"
 echo ""
 
 auth_choice=$(ask_choice "How do you want to authenticate with Claude?" \
@@ -206,8 +206,54 @@ else
     dim "  Run 'claude' inside the container to authenticate"
 fi
 
-# ─── Step 3: Projects directory ──────────────────────────────────────────────
-header "[3/5] Projects Directory"
+# ─── Step 3: Corporate network bypass ────────────────────────────────────────
+header "[3/6] Corporate Network Bypass"
+echo ""
+dim "  If you need access to corporate resources (Git, npm registry, internal APIs)"
+dim "  from inside the container, list the domains here."
+dim "  Traffic to these domains will go through the host (and your corporate VPN),"
+dim "  bypassing the Amnezia VPN tunnel."
+dim "  Leave empty if you only need Claude API access."
+echo ""
+
+corp_domains=()
+
+add_corp=$(ask_choice "Do you need access to corporate domains from the container?" \
+    "Yes, I'll enter domains" \
+    "No, skip")
+
+if [[ "$add_corp" == "1" ]]; then
+    dim "  Enter domains one per line. Press Enter on empty line when done."
+    dim "  Examples: git.mycorp.com, registry.mycorp.com, *.mycorp.com"
+    echo ""
+    while true; do
+        domain=$(ask "Domain (or empty to finish)")
+        if [[ -z "$domain" ]]; then
+            break
+        fi
+        # Basic validation: strip whitespace, reject obviously bad input
+        domain=$(echo "$domain" | tr -d '[:space:]')
+        if [[ -z "$domain" ]]; then
+            continue
+        fi
+        corp_domains+=("$domain")
+        success "Added: $domain"
+    done
+fi
+
+if [[ ${#corp_domains[@]} -gt 0 ]]; then
+    # Save as comma-separated list in .env
+    corp_list=$(IFS=,; echo "${corp_domains[*]}")
+    env_vars[CORP_BYPASS]="$corp_list"
+    success "Corporate bypass: ${corp_list}"
+    dim "  These domains will be routed through your host network"
+else
+    dim "  No corporate bypass configured."
+fi
+echo ""
+
+# ─── Step 4: Projects directory ──────────────────────────────────────────────
+header "[4/6] Projects Directory"
 echo ""
 dim "  This directory will be mounted inside the container at /home/claude/projects"
 dim "  You'll be able to use Claude Code on any project inside it."
@@ -252,8 +298,8 @@ success "Will mount $projects_path → /home/claude/projects"
 } > "$ENV_FILE"
 chmod 600 "$ENV_FILE"
 
-# ─── Step 4: Exclude directories ────────────────────────────────────────────
-header "[4/5] Exclude Directories"
+# ─── Step 5: Exclude directories ────────────────────────────────────────────
+header "[5/6] Exclude Directories"
 echo ""
 dim "  Hide directories from Claude Code inside your projects."
 dim "  Two levels of protection:"
@@ -497,8 +543,8 @@ if [[ ${#claudeignore_entries[@]} -eq 0 ]]; then
     dim "    Hard: add tmpfs volumes to docker-compose.override.yml"
 fi
 
-# ─── Step 5: Build & Launch ──────────────────────────────────────────────────
-header "[5/5] Build & Launch"
+# ─── Step 6: Build & Launch ──────────────────────────────────────────────────
+header "[6/6] Build & Launch"
 echo ""
 
 choice=$(ask_choice "Ready to build and start the container?" \

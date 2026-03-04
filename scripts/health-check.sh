@@ -92,7 +92,25 @@ fi
 
 echo ""
 
-# 5. Projects
+# 5. Corporate bypass
+if [[ -n "${CORP_BYPASS:-}" ]]; then
+    echo -e "${CYAN}  Corporate Bypass${RESET}"
+    IFS=',' read -ra corp_domains <<< "$CORP_BYPASS"
+    for domain in "${corp_domains[@]}"; do
+        domain=$(echo "$domain" | tr -d '[:space:]')
+        [[ -z "$domain" ]] && continue
+        # Try to resolve (skip wildcard prefix)
+        check_domain="${domain#\*.}"
+        if dig +short "$check_domain" &>/dev/null && [[ -n "$(dig +short "$check_domain" 2>/dev/null)" ]]; then
+            ok "$domain resolves"
+        else
+            warn "$domain — cannot resolve (host DNS may not be reachable)"
+        fi
+    done
+    echo ""
+fi
+
+# 6. Projects
 echo -e "${CYAN}  Projects${RESET}"
 if [[ -d /home/claude/projects ]]; then
     count=$(find /home/claude/projects -maxdepth 1 -mindepth 1 2>/dev/null | wc -l)

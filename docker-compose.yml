@@ -20,6 +20,7 @@ services:
       - .env
     environment:
       - KILLSWITCH=${KILLSWITCH:-1}
+      - CORP_BYPASS=${CORP_BYPASS:-}
       - ANTHROPIC_API_KEY_FILE=/run/secrets/anthropic_api_key
     # Resource limits to protect the host
     deploy:
