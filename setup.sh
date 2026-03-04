@@ -90,8 +90,8 @@ clean_path() {
 # ─── Баннер ───────────────────────────────────────────────────────────────────
 echo -e "${BOLD}"
 echo "  ┌──────────────────────────────────────┐"
-echo "  │       Настройка Claudebox            │"
-echo "  │   Docker + Claude Code + VPN         │"
+echo "  │         Настройка Claudebox          │"
+echo "  │      Docker + Claude Code + VPN      │"
 echo "  └──────────────────────────────────────┘"
 echo -e "${RESET}"
 
@@ -225,6 +225,10 @@ if [[ "$auth_choice" == "1" ]]; then
         break
     done
 else
+    # Создаём пустой файл-заглушку, чтобы Docker bind-mount не упал
+    if [[ ! -f "$SECRETS_DIR/anthropic_api_key" ]]; then
+        (umask 077; touch "$SECRETS_DIR/anthropic_api_key")
+    fi
     success "Авторизация через браузер — после запуска контейнера"
     dim "  Выполните 'claude' внутри контейнера для входа"
 fi
@@ -500,18 +504,22 @@ done
 declare -A seen_ignore seen_overlay
 unique_claudeignore=()
 unique_overlay=()
-for entry in "${claudeignore_entries[@]}"; do
-    if [[ -z "${seen_ignore[$entry]+x}" ]]; then
-        seen_ignore[$entry]=1
-        unique_claudeignore+=("$entry")
-    fi
-done
-for entry in "${overlay_entries[@]}"; do
-    if [[ -z "${seen_overlay[$entry]+x}" ]]; then
-        seen_overlay[$entry]=1
-        unique_overlay+=("$entry")
-    fi
-done
+if [[ ${#claudeignore_entries[@]} -gt 0 ]]; then
+    for entry in "${claudeignore_entries[@]}"; do
+        if [[ -z "${seen_ignore[$entry]+x}" ]]; then
+            seen_ignore[$entry]=1
+            unique_claudeignore+=("$entry")
+        fi
+    done
+fi
+if [[ ${#overlay_entries[@]} -gt 0 ]]; then
+    for entry in "${overlay_entries[@]}"; do
+        if [[ -z "${seen_overlay[$entry]+x}" ]]; then
+            seen_overlay[$entry]=1
+            unique_overlay+=("$entry")
+        fi
+    done
+fi
 
 if [[ ${#unique_claudeignore[@]} -gt 0 ]]; then
     claudeignore_file="$projects_path/.claudeignore"
@@ -526,11 +534,13 @@ if [[ ${#unique_claudeignore[@]} -gt 0 ]]; then
     {
         echo "# Управляется через claudebox setup.sh"
         echo "# Пути, исключённые из поиска/чтения Claude Code"
-        for existing in "${existing_entries[@]}"; do
-            if [[ -z "${seen_ignore[$existing]+x}" ]]; then
-                echo "$existing"
-            fi
-        done
+        if [[ ${#existing_entries[@]} -gt 0 ]]; then
+            for existing in "${existing_entries[@]}"; do
+                if [[ -z "${seen_ignore[$existing]+x}" ]]; then
+                    echo "$existing"
+                fi
+            done
+        fi
         for entry in "${unique_claudeignore[@]}"; do
             echo "$entry"
         done

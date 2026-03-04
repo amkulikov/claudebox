@@ -85,8 +85,11 @@ else
     fail "Claude Code CLI не найден"
 fi
 
+SECRET_FILE="${ANTHROPIC_API_KEY_FILE:-/run/secrets/anthropic_api_key}"
 if [[ -n "${ANTHROPIC_API_KEY:-}" ]]; then
     ok "ANTHROPIC_API_KEY задан"
+elif [[ -f "$SECRET_FILE" && -s "$SECRET_FILE" ]]; then
+    ok "API-ключ найден в $SECRET_FILE"
 elif [[ -f "$HOME/.claude/credentials.json" ]]; then
     ok "Учётные данные Claude найдены"
 else
@@ -105,7 +108,8 @@ if [[ -n "${CORP_BYPASS:-}" ]]; then
         [[ -z "$domain" ]] && continue
         # Пробуем резолвить (пропускаем wildcard-префикс)
         check_domain="${domain#\*.}"
-        if dig +short "$check_domain" &>/dev/null && [[ -n "$(dig +short "$check_domain" 2>/dev/null)" ]]; then
+        resolved=$(dig +short "$check_domain" 2>/dev/null | head -1)
+        if [[ -n "$resolved" ]]; then
             ok "$domain резолвится"
         else
             warn "$domain — не удаётся резолвить (DNS хоста может быть недоступен)"

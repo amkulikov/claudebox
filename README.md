@@ -123,7 +123,7 @@ Claude Code не будет индексировать и читать эти ф
 
 Для чувствительных данных — пустой tmpfs монтируется поверх реальной директории. Физически невидимо внутри контейнера.
 
-Настраивается через `setup.sh` (шаг 4) или вручную в `docker-compose.override.yml`:
+Настраивается через `setup.sh` (шаг 5) или вручную в `docker-compose.override.yml`:
 
 ```yaml
 # docker-compose.override.yml
@@ -148,10 +148,10 @@ services:
 
 **VPN не поднимается:**
 ```bash
-# Внутри контейнера
-sudo awg-quick up awg0
-# Проверить логи
+# Внутри контейнера — проверить статус
 health-check
+# Перезапустить контейнер (VPN поднимается автоматически через entrypoint)
+docker compose restart claudebox
 ```
 
 **Claude API недоступен:**

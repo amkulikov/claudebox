@@ -9,10 +9,10 @@ BOLD='\033[1m'
 DIM='\033[2m'
 RESET='\033[0m'
 
-info()    { echo -e "${CYAN}[claudebox]${RESET} $1"; }
-success() { echo -e "${GREEN}[claudebox] ✓${RESET} $1"; }
-warn()    { echo -e "${YELLOW}[claudebox] ⚠${RESET} $1"; }
-error()   { echo -e "${RED}[claudebox] ✗${RESET} $1"; }
+info()    { echo -e "${CYAN}[claudebox]${RESET} $1" >&2; }
+success() { echo -e "${GREEN}[claudebox] ✓${RESET} $1" >&2; }
+warn()    { echo -e "${YELLOW}[claudebox] ⚠${RESET} $1" >&2; }
+error()   { echo -e "${RED}[claudebox] ✗${RESET} $1" >&2; }
 
 AWG_CONF="/etc/amnezia/awg0.conf"
 CLAUDE_USER="claude"
@@ -55,7 +55,7 @@ start_vpn() {
     iface_name=$(basename "$AWG_CONF" .conf)
     local retries=5
     for ((i=1; i<=retries; i++)); do
-        if ip link show "$iface_name" &>/dev/null 2>&1; then
+        if ip link show "$iface_name" &>/dev/null; then
             success "VPN-интерфейс поднят"
             return 0
         fi
@@ -75,13 +75,27 @@ setup_killswitch() {
 
     info "Настройка kill switch..."
 
-    # Получаем адрес VPN-сервера для разрешения начального подключения
-    local endpoint
-    endpoint=$(grep -i '^Endpoint' "$AWG_CONF" | head -1 | awk -F'=' '{print $2}' | tr -d ' ' | cut -d: -f1)
+    # Получаем адрес и порт VPN-сервера для разрешения начального подключения
+    local endpoint_raw endpoint endpoint_port
+    endpoint_raw=$(grep -i '^Endpoint' "$AWG_CONF" | head -1 | awk -F'=' '{print $2}' | tr -d ' ')
 
-    if [[ -z "$endpoint" ]]; then
+    if [[ -z "$endpoint_raw" ]]; then
         warn "Не удалось определить адрес VPN-сервера, пропускаем kill switch"
         return
+    fi
+
+    # Парсим хост и порт (поддержка IPv6: [2001:db8::1]:51820)
+    if [[ "$endpoint_raw" =~ ^\[([^\]]+)\]:([0-9]+)$ ]]; then
+        # IPv6: [addr]:port
+        endpoint="${BASH_REMATCH[1]}"
+        endpoint_port="${BASH_REMATCH[2]}"
+    elif [[ "$endpoint_raw" =~ ^([^:]+):([0-9]+)$ ]]; then
+        # IPv4 или hostname: addr:port
+        endpoint="${BASH_REMATCH[1]}"
+        endpoint_port="${BASH_REMATCH[2]}"
+    else
+        endpoint="$endpoint_raw"
+        endpoint_port=""
     fi
 
     # Парсим DNS-серверы из VPN-конфига для ограничения DNS-трафика
@@ -103,7 +117,12 @@ setup_killswitch() {
     iface_name=$(basename "$AWG_CONF" .conf)
     iptables -A OUTPUT -o lo -j ACCEPT
     iptables -A OUTPUT -o "$iface_name" -j ACCEPT
-    iptables -A OUTPUT -d "$endpoint" -j ACCEPT
+    # Разрешаем только UDP на порт WireGuard к VPN-серверу (не весь трафик)
+    if [[ -n "$endpoint_port" ]]; then
+        iptables -A OUTPUT -d "$endpoint" -p udp --dport "$endpoint_port" -j ACCEPT
+    else
+        iptables -A OUTPUT -d "$endpoint" -p udp -j ACCEPT
+    fi
 
     # Разрешаем DNS только к серверам из VPN-конфига
     if [[ -n "$dns_servers" ]]; then
@@ -114,13 +133,18 @@ setup_killswitch() {
     fi
 
     # Разрешаем Docker-сеть (для связи с хостом)
-    local docker_network
-    docker_network=$(ip -4 route show default 2>/dev/null | awk '{print $3}' | head -1)
-    if [[ -n "$docker_network" ]]; then
-        # Разрешаем только подсеть Docker gateway (/16)
-        local docker_subnet
-        docker_subnet=$(echo "$docker_network" | awk -F. '{print $1"."$2".0.0/16"}')
+    # Берём реальную подсеть из таблицы маршрутизации вместо хардкода /16
+    local docker_subnet
+    docker_subnet=$(ip -4 route show 2>/dev/null | grep -v "default" | grep -v "$iface_name" | awk '{print $1}' | grep '/' | head -1)
+    if [[ -n "$docker_subnet" ]]; then
         iptables -A OUTPUT -d "$docker_subnet" -j ACCEPT
+    else
+        # Фолбэк: разрешаем gateway напрямую
+        local docker_gw
+        docker_gw=$(ip -4 route show default 2>/dev/null | awk '{print $3}' | head -1)
+        if [[ -n "$docker_gw" ]]; then
+            iptables -A OUTPUT -d "$docker_gw" -j ACCEPT
+        fi
     fi
 
     success "Kill switch активен — трафик только через VPN"
@@ -146,6 +170,11 @@ setup_corp_bypass() {
     # Получаем имя Docker bridge интерфейса
     local bridge_iface
     bridge_iface=$(ip -4 route show default 2>/dev/null | awk '{print $5}' | head -1)
+
+    # Разрешаем DNS к Docker gateway ДО резолвинга корп-доменов,
+    # чтобы dig мог использовать DNS хоста (корп. DNS может отличаться от VPN DNS)
+    iptables -A OUTPUT -d "$gateway" -p udp --dport 53 -j ACCEPT 2>/dev/null || true
+    iptables -A OUTPUT -d "$gateway" -p tcp --dport 53 -j ACCEPT 2>/dev/null || true
 
     IFS=',' read -ra domains <<< "$corp_bypass"
     for domain in "${domains[@]}"; do
@@ -183,10 +212,6 @@ setup_corp_bypass() {
 
         success "Bypass: $domain"
     done
-
-    # Разрешаем DNS к Docker gateway (хост может резолвить корп. домены через корп. VPN)
-    iptables -A OUTPUT -d "$gateway" -p udp --dport 53 -j ACCEPT 2>/dev/null || true
-    iptables -A OUTPUT -d "$gateway" -p tcp --dport 53 -j ACCEPT 2>/dev/null || true
 }
 
 # ─── Проверка API ─────────────────────────────────────────────────────────────
