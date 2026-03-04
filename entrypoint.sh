@@ -261,6 +261,17 @@ echo -e "  ${CYAN}health-check${RESET}  — Проверка статуса VPN 
 echo ""
 
 # ─── Сброс привилегий и передача управления CMD ──────────────────────────────
-# Запускаем шелл пользователя от имени непривилегированного юзера.
-# gosu предпочтительнее su, т.к. делает exec напрямую (без лишнего процесса).
-exec gosu "$CLAUDE_USER" "$@"
+# Запускаем CMD от имени непривилегированного юзера.
+# Порядок: gosu (exec без лишнего процесса) → runuser (PAM, всегда есть) → прямой exec.
+if [[ "$(id -u)" == "0" ]]; then
+    if command -v gosu &>/dev/null && gosu "$CLAUDE_USER" true 2>/dev/null; then
+        exec gosu "$CLAUDE_USER" "$@"
+    elif command -v runuser &>/dev/null; then
+        exec runuser -u "$CLAUDE_USER" -- "$@"
+    else
+        warn "Не удалось сбросить привилегии — запуск от root"
+        exec "$@"
+    fi
+else
+    exec "$@"
+fi
