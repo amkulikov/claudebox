@@ -212,15 +212,20 @@ echo -e "${BOLD}  │         Claudebox                │${RESET}"
 echo -e "${BOLD}  └─────────────────────────────────┘${RESET}"
 echo ""
 
-vpn_ok=false
-if start_vpn; then
-    vpn_ok=true
-    setup_killswitch
-    setup_corp_bypass
-fi
-
-if $vpn_ok; then
+if [[ "${VPN_ENABLED:-1}" == "0" ]]; then
+    info "VPN disabled — using host network directly"
     check_api || true
+else
+    vpn_ok=false
+    if start_vpn; then
+        vpn_ok=true
+        setup_killswitch
+        setup_corp_bypass
+    fi
+
+    if $vpn_ok; then
+        check_api || true
+    fi
 fi
 
 echo ""

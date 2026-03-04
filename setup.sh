@@ -124,45 +124,61 @@ success "Docker is installed and running (${COMPOSE[*]})"
 # ─── Step 1: VPN ─────────────────────────────────────────────────────────────
 header "[1/6] VPN Configuration"
 echo ""
-dim "  You need an AmneziaWG config file from your Amnezia VPN server."
-dim "  It looks like a WireGuard config with extra fields (Jc, Jmin, Jmax, S1, S2, H1-H4)."
-dim "  In Amnezia app: Settings → Servers → Share → WireGuard config file."
-echo ""
 
+vpn_enabled=false
 vpn_configured=false
 
-while true; do
-    vpn_path=$(ask "Path to your AmneziaWG config file (or drag & drop)")
-    vpn_path=$(clean_path "$vpn_path")
+vpn_choice=$(ask_choice "Will you use Amnezia VPN to access Claude API?" \
+    "Yes, I have an AmneziaWG config" \
+    "No, Claude API is accessible without VPN")
 
-    if [[ ! -f "$vpn_path" ]]; then
-        error "File not found: $vpn_path"
-        choice=$(ask_choice "What would you like to do?" "Try again" "Skip VPN setup (configure later)")
-        if [[ "$choice" == "2" ]]; then
-            warn "Skipping VPN. You'll need to place your config at configs/amnezia.conf before starting."
-            break
-        fi
-        continue
-    fi
+if [[ "$vpn_choice" == "1" ]]; then
+    vpn_enabled=true
+    echo ""
+    dim "  You need an AmneziaWG config file from your Amnezia VPN server."
+    dim "  It looks like a WireGuard config with extra fields (Jc, Jmin, Jmax, S1, S2, H1-H4)."
+    dim "  In Amnezia app: Settings → Servers → Share → WireGuard config file."
+    echo ""
 
-    # Basic validation: check for WireGuard-like structure
-    if ! grep -qi '\[Interface\]' "$vpn_path"; then
-        error "This doesn't look like a valid WireGuard/AmneziaWG config (missing [Interface] section)"
-        choice=$(ask_choice "What would you like to do?" "Try another file" "Use it anyway" "Skip VPN setup")
-        if [[ "$choice" == "1" ]]; then
+    while true; do
+        vpn_path=$(ask "Path to your AmneziaWG config file (or drag & drop)")
+        vpn_path=$(clean_path "$vpn_path")
+
+        if [[ ! -f "$vpn_path" ]]; then
+            error "File not found: $vpn_path"
+            choice=$(ask_choice "What would you like to do?" "Try again" "Skip VPN setup (configure later)")
+            if [[ "$choice" == "2" ]]; then
+                warn "Skipping VPN config. You'll need to place it at configs/amnezia.conf before starting."
+                break
+            fi
             continue
-        elif [[ "$choice" == "3" ]]; then
-            warn "Skipping VPN setup."
-            break
         fi
-    fi
 
-    cp "$vpn_path" "$CONFIGS_DIR/amnezia.conf"
-    chmod 600 "$CONFIGS_DIR/amnezia.conf"
-    success "Config copied to configs/amnezia.conf"
-    vpn_configured=true
-    break
-done
+        # Basic validation: check for WireGuard-like structure
+        if ! grep -qi '\[Interface\]' "$vpn_path"; then
+            error "This doesn't look like a valid WireGuard/AmneziaWG config (missing [Interface] section)"
+            choice=$(ask_choice "What would you like to do?" "Try another file" "Use it anyway" "Skip VPN setup")
+            if [[ "$choice" == "1" ]]; then
+                continue
+            elif [[ "$choice" == "3" ]]; then
+                warn "Skipping VPN config."
+                break
+            fi
+        fi
+
+        cp "$vpn_path" "$CONFIGS_DIR/amnezia.conf"
+        chmod 600 "$CONFIGS_DIR/amnezia.conf"
+        success "Config copied to configs/amnezia.conf"
+        vpn_configured=true
+        break
+    done
+else
+    # Create a dummy config so docker-compose volume mount doesn't fail
+    if [[ ! -f "$CONFIGS_DIR/amnezia.conf" ]]; then
+        echo "# VPN disabled — placeholder file" > "$CONFIGS_DIR/amnezia.conf"
+    fi
+    success "Running without VPN — Claude API must be reachable from host network"
+fi
 
 # ─── Step 2: Claude Authentication ──────────────────────────────────────────
 header "[2/6] Claude Authentication"
@@ -174,6 +190,13 @@ auth_choice=$(ask_choice "How do you want to authenticate with Claude?" \
 
 # Collect .env values (write all at once at the end to avoid partial truncation)
 declare -A env_vars
+
+# Save VPN mode
+if $vpn_enabled; then
+    env_vars[VPN_ENABLED]="1"
+else
+    env_vars[VPN_ENABLED]="0"
+fi
 
 if [[ "$auth_choice" == "1" ]]; then
     while true; do
@@ -206,51 +229,57 @@ else
     dim "  Run 'claude' inside the container to authenticate"
 fi
 
-# ─── Step 3: Corporate network bypass ────────────────────────────────────────
-header "[3/6] Corporate Network Bypass"
-echo ""
-dim "  If you need access to corporate resources (Git, npm registry, internal APIs)"
-dim "  from inside the container, list the domains here."
-dim "  Traffic to these domains will go through the host (and your corporate VPN),"
-dim "  bypassing the Amnezia VPN tunnel."
-dim "  Leave empty if you only need Claude API access."
-echo ""
-
-corp_domains=()
-
-add_corp=$(ask_choice "Do you need access to corporate domains from the container?" \
-    "Yes, I'll enter domains" \
-    "No, skip")
-
-if [[ "$add_corp" == "1" ]]; then
-    dim "  Enter domains one per line. Press Enter on empty line when done."
-    dim "  Examples: git.mycorp.com, registry.mycorp.com, *.mycorp.com"
+# ─── Step 3: Corporate network bypass (only with VPN) ────────────────────────
+if $vpn_enabled; then
+    header "[3/6] Corporate Network Bypass"
     echo ""
-    while true; do
-        domain=$(ask "Domain (or empty to finish)")
-        if [[ -z "$domain" ]]; then
-            break
-        fi
-        # Basic validation: strip whitespace, reject obviously bad input
-        domain=$(echo "$domain" | tr -d '[:space:]')
-        if [[ -z "$domain" ]]; then
-            continue
-        fi
-        corp_domains+=("$domain")
-        success "Added: $domain"
-    done
-fi
+    dim "  If you need access to corporate resources (Git, npm registry, internal APIs)"
+    dim "  from inside the container, list the domains here."
+    dim "  Traffic to these domains will go through the host (and your corporate VPN),"
+    dim "  bypassing the Amnezia VPN tunnel."
+    dim "  Leave empty if you only need Claude API access."
+    echo ""
 
-if [[ ${#corp_domains[@]} -gt 0 ]]; then
-    # Save as comma-separated list in .env
-    corp_list=$(IFS=,; echo "${corp_domains[*]}")
-    env_vars[CORP_BYPASS]="$corp_list"
-    success "Corporate bypass: ${corp_list}"
-    dim "  These domains will be routed through your host network"
+    corp_domains=()
+
+    add_corp=$(ask_choice "Do you need access to corporate domains from the container?" \
+        "Yes, I'll enter domains" \
+        "No, skip")
+
+    if [[ "$add_corp" == "1" ]]; then
+        dim "  Enter domains one per line. Press Enter on empty line when done."
+        dim "  Examples: git.mycorp.com, registry.mycorp.com, *.mycorp.com"
+        echo ""
+        while true; do
+            domain=$(ask "Domain (or empty to finish)")
+            if [[ -z "$domain" ]]; then
+                break
+            fi
+            # Basic validation: strip whitespace, reject obviously bad input
+            domain=$(echo "$domain" | tr -d '[:space:]')
+            if [[ -z "$domain" ]]; then
+                continue
+            fi
+            corp_domains+=("$domain")
+            success "Added: $domain"
+        done
+    fi
+
+    if [[ ${#corp_domains[@]} -gt 0 ]]; then
+        # Save as comma-separated list in .env
+        corp_list=$(IFS=,; echo "${corp_domains[*]}")
+        env_vars[CORP_BYPASS]="$corp_list"
+        success "Corporate bypass: ${corp_list}"
+        dim "  These domains will be routed through your host network"
+    else
+        dim "  No corporate bypass configured."
+    fi
+    echo ""
 else
-    dim "  No corporate bypass configured."
+    header "[3/6] Corporate Network Bypass"
+    dim "  Skipped (no VPN — all network goes through host)"
+    echo ""
 fi
-echo ""
 
 # ─── Step 4: Projects directory ──────────────────────────────────────────────
 header "[4/6] Projects Directory"

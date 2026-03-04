@@ -19,6 +19,7 @@ services:
     env_file:
       - .env
     environment:
+      - VPN_ENABLED=${VPN_ENABLED:-1}
       - KILLSWITCH=${KILLSWITCH:-1}
       - CORP_BYPASS=${CORP_BYPASS:-}
       - ANTHROPIC_API_KEY_FILE=/run/secrets/anthropic_api_key

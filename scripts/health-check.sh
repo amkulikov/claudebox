@@ -19,34 +19,38 @@ echo ""
 
 errors=0
 
-# 1. VPN interface — detect any awg*/wg* interface
+# 1. VPN
 echo -e "${CYAN}  VPN${RESET}"
-vpn_iface=""
-for iface in $(ip -o link show 2>/dev/null | awk -F': ' '{print $2}' | grep -E '^(awg|wg)'); do
-    vpn_iface="$iface"
-    break
-done
+if [[ "${VPN_ENABLED:-1}" == "0" ]]; then
+    ok "VPN disabled — using host network"
+else
+    vpn_iface=""
+    for iface in $(ip -o link show 2>/dev/null | awk -F': ' '{print $2}' | grep -E '^(awg|wg)'); do
+        vpn_iface="$iface"
+        break
+    done
 
-if [[ -n "$vpn_iface" ]]; then
-    ok "VPN interface ($vpn_iface) is up"
-    vpn_ip=$(ip -4 addr show "$vpn_iface" 2>/dev/null | grep -oP '(?<=inet\s)\d+(\.\d+){3}')
-    if [[ -n "$vpn_ip" ]]; then
-        ok "VPN IP: $vpn_ip"
+    if [[ -n "$vpn_iface" ]]; then
+        ok "VPN interface ($vpn_iface) is up"
+        vpn_ip=$(ip -4 addr show "$vpn_iface" 2>/dev/null | grep -oP '(?<=inet\s)\d+(\.\d+){3}')
+        if [[ -n "$vpn_ip" ]]; then
+            ok "VPN IP: $vpn_ip"
+        fi
+    else
+        fail "No VPN interface found"
     fi
-else
-    fail "No VPN interface found"
-fi
 
-# Show peer status (awg/wg show requires root — may not be available)
-if command -v awg &>/dev/null; then
-    handshake=$(awg show 2>/dev/null | grep "latest handshake" | head -1 || true)
-elif command -v wg &>/dev/null; then
-    handshake=$(wg show 2>/dev/null | grep "latest handshake" | head -1 || true)
-else
-    handshake=""
-fi
-if [[ -n "${handshake:-}" ]]; then
-    ok "Peer handshake:$(echo "$handshake" | sed 's/.*latest handshake://')"
+    # Show peer status (awg/wg show requires root — may not be available)
+    if command -v awg &>/dev/null; then
+        handshake=$(awg show 2>/dev/null | grep "latest handshake" | head -1 || true)
+    elif command -v wg &>/dev/null; then
+        handshake=$(wg show 2>/dev/null | grep "latest handshake" | head -1 || true)
+    else
+        handshake=""
+    fi
+    if [[ -n "${handshake:-}" ]]; then
+        ok "Peer handshake:$(echo "$handshake" | sed 's/.*latest handshake://')"
+    fi
 fi
 
 echo ""

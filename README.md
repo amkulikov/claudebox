@@ -1,12 +1,16 @@
 # Claudebox
 
-Docker-контейнер с Claude Code и Amnezia VPN. Позволяет использовать Claude Code через VPN, не затрагивая основную сеть хоста.
+Docker-контейнер с Claude Code. Опционально — через Amnezia VPN, не затрагивая основную сеть хоста.
+
+Два режима работы:
+- **С VPN** — Claude API доступен через Amnezia VPN, kill-switch защищает от утечек
+- **Без VPN** — Claude API доступен напрямую из сети хоста (VPN не нужен)
 
 ## Требования
 
 - Docker (с Docker Compose)
-- Конфиг AmneziaWG (от вашего Amnezia VPN сервера)
 - API-ключ Anthropic или аккаунт для интерактивного логина
+- (Опционально) Конфиг AmneziaWG — если нужен VPN для доступа к Claude API
 
 ## Быстрый старт
 
@@ -75,6 +79,7 @@ health-check
 |---|---|---|
 | `secrets/anthropic_api_key` | Файл с API-ключом Anthropic (безопаснее чем env) | — |
 | `PROJECTS_PATH` | Путь к проектам на хосте (в `.env`) | `./_projects` |
+| `VPN_ENABLED` | Включить Amnezia VPN (в `.env`) | `1` (включён) |
 | `KILLSWITCH` | Kill-switch: блокировать трафик вне VPN (в `.env`) | `1` (включён) |
 | `CORP_BYPASS` | Домены, которые идут мимо VPN через хост (в `.env`) | — (пусто) |
 
