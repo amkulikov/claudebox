@@ -33,25 +33,30 @@ start_vpn() {
 
     info "Starting AmneziaWG VPN..."
 
-    # Need root for VPN
-    if ! sudo awg-quick up awg0 2>/dev/null; then
-        # Fallback: try standard wg-quick if awg-quick not available
-        if command -v wg-quick &>/dev/null; then
-            warn "awg-quick failed, trying wg-quick..."
-            if ! sudo wg-quick up awg0 2>/dev/null; then
-                error "VPN failed to start. Check your config."
-                return 1
-            fi
-        else
-            error "VPN failed to start. Check your config."
+    # Use full path so awg-quick/wg-quick finds the config
+    # (default search paths are /etc/amneziawg/ and /etc/wireguard/, not /etc/amnezia/)
+    if command -v awg-quick &>/dev/null; then
+        if ! sudo awg-quick up "$AWG_CONF"; then
+            error "awg-quick failed to start VPN. See errors above."
             return 1
         fi
+    elif command -v wg-quick &>/dev/null; then
+        warn "awg-quick not found, trying wg-quick (no obfuscation)..."
+        if ! sudo wg-quick up "$AWG_CONF"; then
+            error "wg-quick failed to start VPN. See errors above."
+            return 1
+        fi
+    else
+        error "Neither awg-quick nor wg-quick found."
+        return 1
     fi
 
-    # Wait for interface
+    # Wait for interface (name derived from config filename: awg0.conf → awg0)
+    local iface_name
+    iface_name=$(basename "$AWG_CONF" .conf)
     local retries=5
     for ((i=1; i<=retries; i++)); do
-        if ip link show awg0 &>/dev/null 2>&1 || ip link show wg0 &>/dev/null 2>&1; then
+        if ip link show "$iface_name" &>/dev/null 2>&1; then
             success "VPN interface is up"
             return 0
         fi
@@ -95,9 +100,10 @@ setup_killswitch() {
     sudo ip6tables -A OUTPUT -j DROP
 
     # IPv4: allow only VPN traffic
+    local iface_name
+    iface_name=$(basename "$AWG_CONF" .conf)
     sudo iptables -A OUTPUT -o lo -j ACCEPT
-    sudo iptables -A OUTPUT -o awg0 -j ACCEPT
-    sudo iptables -A OUTPUT -o wg0 -j ACCEPT
+    sudo iptables -A OUTPUT -o "$iface_name" -j ACCEPT
     sudo iptables -A OUTPUT -d "$endpoint" -j ACCEPT
 
     # Allow DNS only to servers from VPN config

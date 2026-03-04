@@ -25,9 +25,9 @@ ask() {
     local prompt="$1"
     local default="${2:-}"
     if [[ -n "$default" ]]; then
-        echo -ne "  ${prompt} ${DIM}[${default}]${RESET}: "
+        echo -ne "  ${prompt} ${DIM}[${default}]${RESET}: " >&2
     else
-        echo -ne "  ${prompt}: "
+        echo -ne "  ${prompt}: " >&2
     fi
     read -r answer
     echo "${answer:-$default}"
@@ -37,12 +37,12 @@ ask_choice() {
     local prompt="$1"
     shift
     local options=("$@")
-    echo -e "  ${prompt}"
+    echo -e "  ${prompt}" >&2
     for i in "${!options[@]}"; do
-        echo -e "    ${BOLD}$((i+1)).${RESET} ${options[$i]}"
+        echo -e "    ${BOLD}$((i+1)).${RESET} ${options[$i]}" >&2
     done
     while true; do
-        echo -ne "  ${DIM}Enter number [1-${#options[@]}]${RESET}: "
+        echo -ne "  ${DIM}Enter number [1-${#options[@]}]${RESET}: " >&2
         read -r choice
         if [[ "$choice" =~ ^[0-9]+$ ]] && (( choice >= 1 && choice <= ${#options[@]} )); then
             echo "$choice"
@@ -169,7 +169,7 @@ if [[ "$auth_choice" == "1" ]]; then
         fi
 
         # Store API key as a file (more secure than env var — not visible in docker inspect)
-        local secrets_dir="$SCRIPT_DIR/secrets"
+        secrets_dir="$SCRIPT_DIR/secrets"
         mkdir -p "$secrets_dir"
         echo -n "$api_key" > "$secrets_dir/anthropic_api_key"
         chmod 600 "$secrets_dir/anthropic_api_key"
