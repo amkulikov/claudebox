@@ -219,7 +219,7 @@ check_api() {
     info "Проверка доступа к Claude API..."
     local retries=3
     for ((i=1; i<=retries; i++)); do
-        if curl -sf --max-time 5 "https://api.anthropic.com" >/dev/null 2>&1; then
+        if curl -s -o /dev/null --max-time 5 "https://api.anthropic.com" 2>/dev/null; then
             success "Claude API доступен"
             return 0
         fi
