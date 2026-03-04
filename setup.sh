@@ -232,74 +232,184 @@ dim "    Soft  — .claudeignore: Claude Code won't search/read these paths"
 dim "    Hard  — tmpfs overlay: empty dir mounted over real content (physically invisible)"
 echo ""
 
-exclude_choice=$(ask_choice "Do you want to exclude any directories?" \
-    "Yes, configure exclusions" \
-    "No, skip")
+# Suspicious path patterns to auto-detect (name patterns for find -name)
+SUSPECT_PATTERNS=("datafixes" "secrets")
 
 claudeignore_entries=()
 overlay_entries=()
 
-if [[ "$exclude_choice" == "1" ]]; then
-    dim "  Enter paths relative to your projects directory."
-    dim "  Example: myproject/datafixes or myproject/.env"
-    dim "  Type 'done' when finished."
-    echo ""
+# ── 4a. Auto-detect suspicious paths ────────────────────────────────────────
+detected_paths=()
+for pattern in "${SUSPECT_PATTERNS[@]}"; do
+    while IFS= read -r found_path; do
+        # Make relative to projects_path
+        rel="${found_path#"$projects_path"/}"
+        detected_paths+=("$rel")
+    done < <(find "$projects_path" -maxdepth 4 -name "$pattern" 2>/dev/null)
+done
 
+if [[ ${#detected_paths[@]} -gt 0 ]]; then
+    echo -e "  ${YELLOW}Found potentially sensitive paths:${RESET}" >&2
+    echo "" >&2
+
+    # Track which items are selected (all selected by default)
+    declare -A selected
+    for i in "${!detected_paths[@]}"; do
+        selected[$i]=1
+    done
+
+    # Display and let user toggle
     while true; do
-        rel_path=$(ask "Path to exclude (or 'done')")
-        rel_path=$(clean_path "$rel_path")
+        for i in "${!detected_paths[@]}"; do
+            if [[ "${selected[$i]}" == "1" ]]; then
+                echo -e "    ${GREEN}[x]${RESET} ${BOLD}$((i+1)).${RESET} ${detected_paths[$i]}" >&2
+            else
+                echo -e "    ${DIM}[ ]${RESET} ${BOLD}$((i+1)).${RESET} ${DIM}${detected_paths[$i]}${RESET}" >&2
+            fi
+        done
+        echo "" >&2
+        echo -ne "  ${DIM}Enter number to toggle, 'a' to select all, 'n' to deselect all, or 'done'${RESET}: " >&2
+        read -r toggle_input
 
-        if [[ "$rel_path" == "done" || -z "$rel_path" ]]; then
+        if [[ "$toggle_input" == "done" || "$toggle_input" == "" ]]; then
+            break
+        elif [[ "$toggle_input" == "a" ]]; then
+            for i in "${!detected_paths[@]}"; do selected[$i]=1; done
+        elif [[ "$toggle_input" == "n" ]]; then
+            for i in "${!detected_paths[@]}"; do selected[$i]=0; done
+        elif [[ "$toggle_input" =~ ^[0-9]+$ ]]; then
+            idx=$((toggle_input - 1))
+            if [[ -n "${detected_paths[$idx]+x}" ]]; then
+                if [[ "${selected[$idx]}" == "1" ]]; then
+                    selected[$idx]=0
+                else
+                    selected[$idx]=1
+                fi
+            else
+                error "Invalid number" >&2
+            fi
+        else
+            error "Invalid input" >&2
+        fi
+    done
+
+    # Ask protection level for all selected detected paths
+    has_selected=false
+    for i in "${!detected_paths[@]}"; do
+        if [[ "${selected[$i]}" == "1" ]]; then
+            has_selected=true
             break
         fi
+    done
 
-        # Validate the path exists
-        full_path="$projects_path/$rel_path"
-        if [[ ! -e "$full_path" ]]; then
-            warn "Path not found: $full_path (will still add it)"
-        fi
-
-        level=$(ask_choice "Protection level for '$rel_path'?" \
+    if $has_selected; then
+        level=$(ask_choice "Protection level for selected paths?" \
             "Soft (.claudeignore only)" \
             "Hard (tmpfs overlay — physically hidden)")
 
-        claudeignore_entries+=("$rel_path")
-        if [[ "$level" == "2" ]]; then
-            overlay_entries+=("$rel_path")
-        fi
+        for i in "${!detected_paths[@]}"; do
+            if [[ "${selected[$i]}" == "1" ]]; then
+                claudeignore_entries+=("${detected_paths[$i]}")
+                if [[ "$level" == "2" ]]; then
+                    overlay_entries+=("${detected_paths[$i]}")
+                fi
+                success "Added: ${detected_paths[$i]}"
+            fi
+        done
+    fi
+else
+    dim "  No suspicious paths auto-detected."
+fi
 
-        success "Added: $rel_path ($([ "$level" == "2" ] && echo "hard" || echo "soft"))"
+# ── 4b. Manual search ───────────────────────────────────────────────────────
+echo "" >&2
+add_more=$(ask_choice "Search for more paths to exclude?" \
+    "Yes, search by name" \
+    "No, continue")
+
+while [[ "$add_more" == "1" ]]; do
+    echo -ne "  Search (partial name): " >&2
+    read -r search_term
+
+    if [[ -z "$search_term" ]]; then
+        add_more=$(ask_choice "Search for more?" "Yes" "No, continue")
+        continue
+    fi
+
+    # Find matching paths
+    search_results=()
+    while IFS= read -r found_path; do
+        rel="${found_path#"$projects_path"/}"
+        search_results+=("$rel")
+    done < <(find "$projects_path" -maxdepth 5 -iname "*${search_term}*" 2>/dev/null | head -20)
+
+    if [[ ${#search_results[@]} -eq 0 ]]; then
+        warn "No matches for '$search_term'"
+        add_more=$(ask_choice "Search for more?" "Yes" "No, continue")
+        continue
+    fi
+
+    echo "" >&2
+    echo -e "  ${CYAN}Found ${#search_results[@]} match(es):${RESET}" >&2
+    for i in "${!search_results[@]}"; do
+        echo -e "    ${BOLD}$((i+1)).${RESET} ${search_results[$i]}" >&2
     done
+    echo "" >&2
 
-    # Generate .claudeignore
-    if [[ ${#claudeignore_entries[@]} -gt 0 ]]; then
-        claudeignore_file="$projects_path/.claudeignore"
-        {
-            echo "# Generated by claudebox setup.sh"
-            echo "# Paths excluded from Claude Code search/read"
-            for entry in "${claudeignore_entries[@]}"; do
-                echo "$entry"
-            done
-        } > "$claudeignore_file"
-        success "Created $claudeignore_file"
+    echo -ne "  ${DIM}Enter numbers to exclude (comma-separated), or 'skip'${RESET}: " >&2
+    read -r pick_input
+
+    if [[ "$pick_input" != "skip" && -n "$pick_input" ]]; then
+        IFS=',' read -ra picks <<< "$pick_input"
+        for pick in "${picks[@]}"; do
+            pick=$(echo "$pick" | tr -d ' ')
+            if [[ "$pick" =~ ^[0-9]+$ ]]; then
+                idx=$((pick - 1))
+                if [[ -n "${search_results[$idx]+x}" ]]; then
+                    level=$(ask_choice "Protection level for '${search_results[$idx]}'?" \
+                        "Soft (.claudeignore only)" \
+                        "Hard (tmpfs overlay — physically hidden)")
+
+                    claudeignore_entries+=("${search_results[$idx]}")
+                    if [[ "$level" == "2" ]]; then
+                        overlay_entries+=("${search_results[$idx]}")
+                    fi
+                    success "Added: ${search_results[$idx]}"
+                fi
+            fi
+        done
     fi
 
-    # Generate docker-compose.override.yml with tmpfs overlays
-    if [[ ${#overlay_entries[@]} -gt 0 ]]; then
-        override_file="$SCRIPT_DIR/docker-compose.override.yml"
-        {
-            echo "# Generated by claudebox setup.sh"
-            echo "# tmpfs overlays to physically hide sensitive directories"
-            echo "services:"
-            echo "  claudebox:"
-            echo "    volumes:"
-            for entry in "${overlay_entries[@]}"; do
-                echo "      - type: tmpfs"
-                echo "        target: /home/claude/projects/${entry}"
-            done
-        } > "$override_file"
-        success "Created docker-compose.override.yml with ${#overlay_entries[@]} tmpfs overlay(s)"
-    fi
+    add_more=$(ask_choice "Search for more?" "Yes" "No, continue")
+done
+
+# ── 4c. Generate exclusion files ────────────────────────────────────────────
+if [[ ${#claudeignore_entries[@]} -gt 0 ]]; then
+    claudeignore_file="$projects_path/.claudeignore"
+    {
+        echo "# Generated by claudebox setup.sh"
+        echo "# Paths excluded from Claude Code search/read"
+        for entry in "${claudeignore_entries[@]}"; do
+            echo "$entry"
+        done
+    } > "$claudeignore_file"
+    success "Created $claudeignore_file (${#claudeignore_entries[@]} entries)"
+fi
+
+if [[ ${#overlay_entries[@]} -gt 0 ]]; then
+    override_file="$SCRIPT_DIR/docker-compose.override.yml"
+    {
+        echo "# Generated by claudebox setup.sh"
+        echo "# tmpfs overlays to physically hide sensitive directories"
+        echo "services:"
+        echo "  claudebox:"
+        echo "    volumes:"
+        for entry in "${overlay_entries[@]}"; do
+            echo "      - type: tmpfs"
+            echo "        target: /home/claude/projects/${entry}"
+        done
+    } > "$override_file"
+    success "Created docker-compose.override.yml with ${#overlay_entries[@]} tmpfs overlay(s)"
 fi
 
 if [[ ${#claudeignore_entries[@]} -eq 0 ]]; then
