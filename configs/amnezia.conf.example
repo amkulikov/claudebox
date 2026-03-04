@@ -1,0 +1,34 @@
+# AmneziaWG configuration file
+# Replace all values with your actual server configuration.
+#
+# How to get this config:
+#   1. Open Amnezia VPN app
+#   2. Go to Settings → Servers → your server
+#   3. Share → Export as WireGuard/AmneziaWG config
+#   4. Save the file and point setup.sh to it
+#
+# Or create manually on your VPS — see:
+#   https://docs.amnezia.org/
+
+[Interface]
+PrivateKey = YOUR_PRIVATE_KEY_HERE
+Address = 10.8.1.2/32
+DNS = 1.1.1.1, 8.8.8.8
+
+# AmneziaWG obfuscation parameters (optional for standard WireGuard)
+Jc = 4
+Jmin = 40
+Jmax = 70
+S1 = 0
+S2 = 0
+H1 = 1
+H2 = 2
+H3 = 3
+H4 = 4
+
+[Peer]
+PublicKey = YOUR_SERVER_PUBLIC_KEY_HERE
+PresharedKey = YOUR_PRESHARED_KEY_HERE
+AllowedIPs = 0.0.0.0/0
+Endpoint = YOUR_SERVER_IP:YOUR_PORT
+PersistentKeepalive = 25

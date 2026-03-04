@@ -1,0 +1,23 @@
+services:
+  claudebox:
+    build: .
+    container_name: claudebox
+    cap_add:
+      - NET_ADMIN
+    devices:
+      - /dev/net/tun:/dev/net/tun
+    sysctls:
+      - net.ipv4.conf.all.src_valid_mark=1
+    volumes:
+      - ./configs/amnezia.conf:/etc/amnezia/awg0.conf:ro
+      - ${PROJECTS_PATH:-~/projects}:/home/claude/projects
+      - claude-config:/home/claude/.claude
+    environment:
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}
+      - KILLSWITCH=${KILLSWITCH:-1}
+    stdin_open: true
+    tty: true
+    restart: unless-stopped
+
+volumes:
+  claude-config:

@@ -1,0 +1,67 @@
+FROM ubuntu:24.04
+
+ENV DEBIAN_FRONTEND=noninteractive
+
+# ─── System packages ────────────────────────────────────────────────────────
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        curl \
+        ca-certificates \
+        gnupg \
+        iptables \
+        iproute2 \
+        dns-root-data \
+        dnsutils \
+        jq \
+        git \
+        openssh-client \
+        sudo \
+    && rm -rf /var/lib/apt/lists/*
+
+# ─── Node.js 22 LTS ─────────────────────────────────────────────────────────
+RUN curl -fsSL https://deb.nodesource.com/setup_22.x | bash - \
+    && apt-get install -y --no-install-recommends nodejs \
+    && rm -rf /var/lib/apt/lists/*
+
+# ─── AmneziaWG ──────────────────────────────────────────────────────────────
+RUN curl -fsSL https://raw.githubusercontent.com/amnezia-vpn/amneziawg-linux-kernel-module/master/install.sh | bash \
+    || true
+# Install amneziawg-tools (awg, awg-quick)
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        software-properties-common \
+    && add-apt-repository -y ppa:amnezia/ppa \
+    && apt-get update \
+    && apt-get install -y --no-install-recommends amneziawg-tools \
+    || ( \
+        # Fallback: build from source if PPA not available
+        apt-get install -y --no-install-recommends build-essential && \
+        cd /tmp && \
+        curl -fsSL https://github.com/amnezia-vpn/amneziawg-tools/archive/refs/heads/master.tar.gz | tar xz && \
+        cd amneziawg-tools-master/src && \
+        make && make install && \
+        cd / && rm -rf /tmp/amneziawg-tools-master \
+    ) \
+    && rm -rf /var/lib/apt/lists/*
+
+# ─── Claude Code CLI ────────────────────────────────────────────────────────
+RUN npm install -g @anthropic-ai/claude-code
+
+# ─── User setup ─────────────────────────────────────────────────────────────
+RUN useradd -m -s /bin/bash -G sudo claude \
+    && echo "claude ALL=(ALL) NOPASSWD:ALL" > /etc/sudoers.d/claude
+
+# ─── Health check script ────────────────────────────────────────────────────
+COPY scripts/health-check.sh /usr/local/bin/health-check
+RUN chmod +x /usr/local/bin/health-check
+
+# ─── Entrypoint ─────────────────────────────────────────────────────────────
+COPY entrypoint.sh /entrypoint.sh
+RUN chmod +x /entrypoint.sh
+
+# ─── Config directory ───────────────────────────────────────────────────────
+RUN mkdir -p /etc/amnezia && chmod 700 /etc/amnezia
+
+WORKDIR /home/claude/projects
+USER claude
+
+ENTRYPOINT ["/entrypoint.sh"]
+CMD ["bash"]
