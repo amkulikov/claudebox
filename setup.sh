@@ -364,48 +364,106 @@ else
     echo ""
 fi
 
-# ─── Шаг 4: Директория с проектами ───────────────────────────────────────────
-header "[4/6] Директория проектов"
+# ─── Шаг 4: Директории с проектами ──────────────────────────────────────────
+header "[4/6] Директории проектов"
 echo ""
-dim "  Эта директория будет смонтирована внутри контейнера в /home/claude/projects."
-dim "  Claude Code сможет работать с любым проектом внутри неё."
+dim "  Каждая директория будет смонтирована в контейнер."
+dim "  Можно указать несколько — каждая станет отдельной папкой в /home/claude/projects/."
+dim "  После настройки можно добавлять проекты: ./add-project.sh /path/to/project"
 echo ""
 
-default_projects="$HOME/projects"
-projects_path=$(ask "Путь к директории с проектами" "$default_projects")
-projects_path=$(clean_path "$projects_path")
+# ── Вспомогательная функция для добавления проекта ───────────────────────────
+_ask_project_path() {
+    local default="${1:-}"
+    local path
+    path=$(ask "Путь к директории проекта" "$default")
+    path=$(clean_path "$path")
 
-# Предупреждение о слишком широких путях
-if [[ "$projects_path" == "/" || "$projects_path" == "$HOME" ]]; then
-    warn "ВНИМАНИЕ: монтирование '$projects_path' даст Claude доступ ко ВСЕМ вашим файлам!"
-    choice=$(ask_choice "Вы уверены?" "Нет, выберу поддиректорию" "Да, продолжить")
-    if [[ "$choice" == "1" ]]; then
-        projects_path=$(ask "Путь к директории с проектами" "$default_projects")
-        projects_path=$(clean_path "$projects_path")
-    fi
-fi
-
-if [[ ! -d "$projects_path" ]]; then
-    choice=$(ask_choice "Директория '$projects_path' не существует. Создать?" "Да" "Выбрать другой путь" "Пропустить")
-    if [[ "$choice" == "1" ]]; then
-        mkdir -p "$projects_path"
-        success "Создана $projects_path"
-    elif [[ "$choice" == "2" ]]; then
-        projects_path=$(ask "Путь к директории с проектами")
-        projects_path=$(clean_path "$projects_path")
-        if [[ ! -d "$projects_path" ]]; then
-            mkdir -p "$projects_path"
-            success "Создана $projects_path"
+    # Предупреждение о слишком широких путях
+    if [[ "$path" == "/" || "$path" == "$HOME" ]]; then
+        warn "ВНИМАНИЕ: монтирование '$path' даст Claude доступ ко ВСЕМ вашим файлам!"
+        local ch
+        ch=$(ask_choice "Вы уверены?" "Нет, выберу другой путь" "Да, продолжить")
+        if [[ "$ch" == "1" ]]; then
+            path=$(ask "Путь к директории проекта" "$default")
+            path=$(clean_path "$path")
         fi
-    else
-        projects_path="$default_projects"
-        mkdir -p "$projects_path"
-        warn "Используется по умолчанию: $projects_path"
     fi
-fi
 
-_env_PROJECTS_PATH="$projects_path"
-success "Будет смонтировано: $projects_path → /home/claude/projects"
+    if [[ ! -d "$path" ]]; then
+        local ch
+        ch=$(ask_choice "Директория '$path' не существует. Создать?" "Да" "Выбрать другой путь")
+        if [[ "$ch" == "1" ]]; then
+            mkdir -p "$path"
+            success "Создана $path"
+        else
+            path=$(ask "Путь к директории проекта")
+            path=$(clean_path "$path")
+            if [[ ! -d "$path" ]]; then
+                mkdir -p "$path"
+                success "Создана $path"
+            fi
+        fi
+    fi
+
+    echo "$path"
+}
+
+project_paths=()
+
+# Первый проект — обязательный
+default_projects="$HOME/projects"
+first_path=$(_ask_project_path "$default_projects")
+project_paths+=("$first_path")
+mount_name=$(basename "$first_path")
+success "Добавлен: $first_path → /home/claude/projects/$mount_name"
+
+# Дополнительные проекты
+while true; do
+    echo ""
+    add_more=$(ask_choice "Добавить ещё одну директорию проекта?" \
+        "Нет, достаточно" \
+        "Да, добавить ещё")
+    if [[ "$add_more" == "1" ]]; then
+        break
+    fi
+
+    extra_path=$(_ask_project_path "")
+    if [[ -z "$extra_path" ]]; then
+        continue
+    fi
+
+    # Проверяем дублирование
+    is_dup=false
+    for existing in "${project_paths[@]}"; do
+        if [[ "$existing" == "$extra_path" ]]; then
+            warn "Этот путь уже добавлен"
+            is_dup=true
+            break
+        fi
+    done
+    $is_dup && continue
+
+    project_paths+=("$extra_path")
+    mount_name=$(basename "$extra_path")
+    success "Добавлен: $extra_path → /home/claude/projects/$mount_name"
+done
+
+# Первый проект идёт в PROJECTS_PATH (основной docker-compose.yml)
+_env_PROJECTS_PATH="${project_paths[0]}"
+
+# Дополнительные проекты сохраняем для генерации override
+_extra_project_paths=()
+for ((i=1; i<${#project_paths[@]}; i++)); do
+    _extra_project_paths+=("${project_paths[$i]}")
+done
+
+echo ""
+if [[ ${#project_paths[@]} -eq 1 ]]; then
+    success "Будет смонтировано: ${project_paths[0]} → /home/claude/projects"
+else
+    success "${#project_paths[@]} директорий будут смонтированы в /home/claude/projects/"
+fi
 
 # ─── Запись .env файла (атомарно через temp + mv) ────────────────────────────
 # Хелпер: экранирование и запись одной переменной
@@ -454,10 +512,12 @@ overlay_entries=()
 # ── 5a. Автодетект подозрительных путей ───────────────────────────────────────
 detected_paths=()
 for pattern in "${SUSPECT_PATTERNS[@]}"; do
-    while IFS= read -r found_path; do
-        rel="${found_path#"$projects_path"/}"
-        detected_paths+=("$rel")
-    done < <(find "$projects_path" -maxdepth 4 -type d -name ".git" -prune -o -type d -name "$pattern" -print 2>/dev/null)
+    for proj_path in "${project_paths[@]}"; do
+        while IFS= read -r found_path; do
+            rel="${found_path#"$proj_path"/}"
+            detected_paths+=("$rel")
+        done < <(find "$proj_path" -maxdepth 4 -type d -name ".git" -prune -o -type d -name "$pattern" -print 2>/dev/null)
+    done
 done
 
 if [[ ${#detected_paths[@]} -gt 0 ]]; then
@@ -555,12 +615,14 @@ while [[ "$add_more" == "1" ]]; do
     # Экранируем glob-символы для безопасности find
     safe_term=$(printf '%s' "$search_term" | sed 's/[][*?\\]/\\&/g')
 
-    # Поиск совпадений
+    # Поиск совпадений по всем проектам
     search_results=()
-    while IFS= read -r found_path; do
-        rel="${found_path#"$projects_path"/}"
-        search_results+=("$rel")
-    done < <(find "$projects_path" -maxdepth 5 -name ".git" -prune -o -iname "*${safe_term}*" -print 2>/dev/null | head -20)
+    for proj_path in "${project_paths[@]}"; do
+        while IFS= read -r found_path; do
+            rel="${found_path#"$proj_path"/}"
+            search_results+=("$rel")
+        done < <(find "$proj_path" -maxdepth 5 -name ".git" -prune -o -iname "*${safe_term}*" -print 2>/dev/null | head -20)
+    done
 
     if [[ ${#search_results[@]} -eq 0 ]]; then
         warn "Нет совпадений для '$search_term'"
@@ -586,7 +648,7 @@ while [[ "$add_more" == "1" ]]; do
                 idx=$((pick - 1))
                 if (( idx < ${#search_results[@]} )); then
                     entry="${search_results[$idx]}"
-                    full_entry="$projects_path/$entry"
+                    full_entry="${project_paths[0]}/$entry"
 
                     if ! validate_relative_path "$entry"; then
                         warn "Путь '$entry' пропущен: $_path_reject_reason"
@@ -635,7 +697,7 @@ if [[ ${#overlay_entries[@]} -gt 0 ]]; then
 fi
 
 if [[ ${#unique_claudeignore[@]} -gt 0 ]]; then
-    claudeignore_file="$projects_path/.claudeignore"
+    claudeignore_file="${project_paths[0]}/.claudeignore"
     # Сохраняем существующие записи
     existing_entries=()
     if [[ -f "$claudeignore_file" ]]; then
@@ -662,25 +724,35 @@ if [[ ${#unique_claudeignore[@]} -gt 0 ]]; then
     success "Обновлён $claudeignore_file (${#unique_claudeignore[@]} новых записей)"
 fi
 
-if [[ ${#unique_overlay[@]} -gt 0 ]]; then
+# Генерируем docker-compose.override.yml если есть доп. проекты или tmpfs-оверлеи
+_need_override=false
+if [[ ${#_extra_project_paths[@]} -gt 0 || ${#unique_overlay[@]} -gt 0 ]]; then
+    _need_override=true
+fi
+
+if $_need_override; then
     override_file="$SCRIPT_DIR/docker-compose.override.yml"
     assert_not_symlink "$override_file"
-    # Бэкап существующего override перед перезаписью
     if [[ -f "$override_file" ]]; then
         backup="${override_file}.bak.$(date +%Y%m%d%H%M%S)"
         cp "$override_file" "$backup"
         warn "docker-compose.override.yml сохранён в $(basename "$backup")"
     fi
-    # Атомарная запись через temp-файл
     _tmp_override=$(mktemp "$SCRIPT_DIR/.override.XXXXXX")
     {
         echo "# Сгенерировано claudebox setup.sh"
-        echo "# tmpfs-оверлеи для скрытия чувствительных директорий"
         echo "services:"
         echo "  claudebox:"
         echo "    volumes:"
+        # Дополнительные проекты
+        for extra_path in "${_extra_project_paths[@]}"; do
+            mount_name=$(basename "$extra_path")
+            escaped_src="${extra_path//\\/\\\\}"
+            escaped_src="${escaped_src//\"/\\\"}"
+            echo "      - \"${escaped_src}:/home/claude/projects/${mount_name}\""
+        done
+        # tmpfs-оверлеи для скрытия чувствительных директорий
         for entry in "${unique_overlay[@]}"; do
-            # Экранируем для YAML: кавычки вокруг target
             escaped="${entry//\\/\\\\}"
             escaped="${escaped//\"/\\\"}"
             echo "      - type: tmpfs"
@@ -689,7 +761,10 @@ if [[ ${#unique_overlay[@]} -gt 0 ]]; then
     } > "$_tmp_override"
     chmod 644 "$_tmp_override"
     mv -f "$_tmp_override" "$override_file"
-    success "Создан docker-compose.override.yml с ${#unique_overlay[@]} tmpfs-оверлеем(ями)"
+    local parts=()
+    [[ ${#_extra_project_paths[@]} -gt 0 ]] && parts+=("${#_extra_project_paths[@]} доп. проект(ов)")
+    [[ ${#unique_overlay[@]} -gt 0 ]] && parts+=("${#unique_overlay[@]} tmpfs-оверлей(ев)")
+    success "Создан docker-compose.override.yml: $(IFS=', '; echo "${parts[*]}")"
 fi
 
 if [[ ${#claudeignore_entries[@]} -eq 0 ]]; then

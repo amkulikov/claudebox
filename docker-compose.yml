@@ -4,6 +4,8 @@ services:
     container_name: claudebox
     cap_add:
       - NET_ADMIN
+      - SETUID
+      - SETGID
     cap_drop:
       - ALL
     devices:
