@@ -2,7 +2,7 @@
 # Обёртка для Claude Code CLI: инжектит API-ключ только в процесс Claude.
 # Это предотвращает утечку ключа через /proc/1/environ (PID entrypoint).
 
-REAL_CLAUDE="$(which -a claude 2>/dev/null | grep -v "$0" | head -1)"
+REAL_CLAUDE="$(which -a claude 2>/dev/null | grep -Fv "$0" | head -1)"
 if [[ -z "$REAL_CLAUDE" ]]; then
     # Фолбэк: ищем claude в стандартных путях npm
     for candidate in /usr/local/bin/claude /usr/bin/claude; do

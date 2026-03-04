@@ -14,7 +14,7 @@ if [[ ! -t 0 || ! -t 1 ]]; then
 fi
 
 # ─── Ловушка ошибок для читаемых сообщений при падении ────────────────────────
-trap 'echo -e "\033[0;31m✗ Ошибка в строке $LINENO: $BASH_COMMAND\033[0m" >&2' ERR
+trap 'echo -e "\033[0;31m✗ Непредвиденная ошибка в строке $LINENO\033[0m" >&2' ERR
 
 # ─── Цвета и хелперы ─────────────────────────────────────────────────────────
 RED='\033[0;31m'
@@ -29,6 +29,15 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ENV_FILE="$SCRIPT_DIR/.env"
 CONFIGS_DIR="$SCRIPT_DIR/configs"
 SECRETS_DIR="$SCRIPT_DIR/secrets"
+
+# Проверяем что директории не подменены symlink-ами
+for _dir in "$CONFIGS_DIR" "$SECRETS_DIR"; do
+    if [[ -L "$_dir" ]]; then
+        echo "ОШИБКА: '$_dir' является символической ссылкой — возможна атака. Удалите и перезапустите." >&2
+        exit 1
+    fi
+done
+unset _dir
 
 # Создаём необходимые директории с ограниченными правами
 mkdir -p "$CONFIGS_DIR" && chmod 700 "$CONFIGS_DIR"
@@ -84,7 +93,50 @@ clean_path() {
     p="${p//\\ / }"
     # Раскрыть ~
     p="${p/#\~/$HOME}"
+    # Нормализовать путь (убирает .., лишние /)
+    if [[ -e "$p" ]]; then
+        p="$(cd "$(dirname "$p")" && pwd)/$(basename "$p")"
+    fi
     echo "$p"
+}
+
+# ─── Валидация относительного пути (для YAML и .claudeignore) ────────────────
+# Защита от инъекции в YAML, path traversal и проблемных символов.
+validate_relative_path() {
+    local p="$1"
+    # Запрет пустых, абсолютных путей, path traversal
+    if [[ -z "$p" || "$p" == /* || "$p" == *".."* ]]; then
+        return 1
+    fi
+    # Запрет переносов строк, NUL
+    if [[ "$p" == *$'\n'* || "$p" == *$'\r'* || "$p" == *$'\0'* ]]; then
+        return 1
+    fi
+    # Разрешаем только безопасные символы: буквы, цифры, точка, _, /, -, пробел, @, +
+    local safe_pattern='^[A-Za-z0-9._/@+ -]+$'
+    if [[ ! "$p" =~ $safe_pattern ]]; then
+        return 1
+    fi
+    return 0
+}
+
+# ─── Проверка что путь не symlink (защита от symlink-атак) ──────────────────
+assert_not_symlink() {
+    local p="$1"
+    if [[ -L "$p" ]]; then
+        error "Путь '$p' является символической ссылкой — это небезопасно"
+        exit 1
+    fi
+}
+
+# ─── Валидация домена (для CORP_BYPASS) ─────────────────────────────────────
+validate_domain() {
+    local d="$1"
+    # Разрешаем *. только в начале, затем [A-Za-z0-9.-]
+    if [[ "$d" =~ ^(\*\.)?[A-Za-z0-9]([A-Za-z0-9.-]*[A-Za-z0-9])?$ ]]; then
+        return 0
+    fi
+    return 1
 }
 
 # ─── Баннер ───────────────────────────────────────────────────────────────────
@@ -104,7 +156,7 @@ if ! command -v docker &>/dev/null; then
 fi
 
 # Проверка что Docker-демон запущен
-if ! docker info &>/dev/null 2>&1; then
+if ! docker info &>/dev/null; then
     error "Docker-демон не запущен. Запустите его и перезапустите этот скрипт."
     exit 1
 fi
@@ -144,6 +196,11 @@ if [[ "$vpn_choice" == "1" ]]; then
         vpn_path=$(ask "Путь к конфигу AmneziaWG (или перетащите файл)")
         vpn_path=$(clean_path "$vpn_path")
 
+        if [[ -L "$vpn_path" ]]; then
+            warn "Файл является символической ссылкой: $vpn_path"
+            warn "Будет скопировано содержимое целевого файла"
+        fi
+
         if [[ ! -f "$vpn_path" ]]; then
             error "Файл не найден: $vpn_path"
             choice=$(ask_choice "Что делаем?" "Попробовать снова" "Пропустить (настрою позже)")
@@ -166,6 +223,7 @@ if [[ "$vpn_choice" == "1" ]]; then
             fi
         fi
 
+        assert_not_symlink "$CONFIGS_DIR/amnezia.conf"
         cp "$vpn_path" "$CONFIGS_DIR/amnezia.conf"
         chmod 600 "$CONFIGS_DIR/amnezia.conf"
         success "Конфиг скопирован в configs/amnezia.conf"
@@ -218,6 +276,7 @@ if [[ "$auth_choice" == "1" ]]; then
         fi
 
         # Сохраняем ключ в файл (безопаснее env-переменной — не виден через docker inspect)
+        assert_not_symlink "$SECRETS_DIR/anthropic_api_key"
         (umask 077; echo -n "$api_key" > "$SECRETS_DIR/anthropic_api_key")
         # Очищаем ключ из памяти шелла
         api_key=""; unset api_key
@@ -264,6 +323,12 @@ if $vpn_enabled; then
             if [[ -z "$domain" ]]; then
                 continue
             fi
+            # Валидация формата домена
+            if ! validate_domain "$domain"; then
+                error "Недопустимый формат домена: $domain"
+                dim "    Разрешены: буквы, цифры, точки, дефисы. Wildcard только в начале: *.example.com"
+                continue
+            fi
             corp_domains+=("$domain")
             success "Добавлен: $domain"
         done
@@ -295,6 +360,16 @@ default_projects="$HOME/projects"
 projects_path=$(ask "Путь к директории с проектами" "$default_projects")
 projects_path=$(clean_path "$projects_path")
 
+# Предупреждение о слишком широких путях
+if [[ "$projects_path" == "/" || "$projects_path" == "$HOME" ]]; then
+    warn "ВНИМАНИЕ: монтирование '$projects_path' даст Claude доступ ко ВСЕМ вашим файлам!"
+    choice=$(ask_choice "Вы уверены?" "Нет, выберу поддиректорию" "Да, продолжить")
+    if [[ "$choice" == "1" ]]; then
+        projects_path=$(ask "Путь к директории с проектами" "$default_projects")
+        projects_path=$(clean_path "$projects_path")
+    fi
+fi
+
 if [[ ! -d "$projects_path" ]]; then
     choice=$(ask_choice "Директория '$projects_path' не существует. Создать?" "Да" "Выбрать другой путь" "Пропустить")
     if [[ "$choice" == "1" ]]; then
@@ -317,17 +392,26 @@ fi
 env_vars[PROJECTS_PATH]="$projects_path"
 success "Будет смонтировано: $projects_path → /home/claude/projects"
 
-# ─── Запись .env файла (всё сразу) ───────────────────────────────────────────
+# ─── Запись .env файла (атомарно через temp + mv) ────────────────────────────
+assert_not_symlink "$ENV_FILE"
+_tmp_env=$(mktemp "$SCRIPT_DIR/.env.XXXXXX")
 {
     for key in $(printf '%s\n' "${!env_vars[@]}" | sort); do
         val="${env_vars[$key]}"
+        # Запрет переносов строк в значениях (ломают формат .env)
+        if [[ "$val" == *$'\n'* || "$val" == *$'\r'* ]]; then
+            val="${val//$'\n'/ }"
+            val="${val//$'\r'/}"
+            warn "Переносы строк удалены из значения $key"
+        fi
         # Экранируем обратные слеши и кавычки для формата .env
         val="${val//\\/\\\\}"
         val="${val//\"/\\\"}"
         echo "${key}=\"${val}\""
     done
-} > "$ENV_FILE"
-chmod 600 "$ENV_FILE"
+} > "$_tmp_env"
+chmod 600 "$_tmp_env"
+mv -f "$_tmp_env" "$ENV_FILE"
 
 # ─── Шаг 5: Скрытие директорий ───────────────────────────────────────────────
 header "[5/6] Скрытие директорий"
@@ -350,7 +434,7 @@ for pattern in "${SUSPECT_PATTERNS[@]}"; do
     while IFS= read -r found_path; do
         rel="${found_path#"$projects_path"/}"
         detected_paths+=("$rel")
-    done < <(find "$projects_path" -maxdepth 4 -type d -name "$pattern" 2>/dev/null)
+    done < <(find "$projects_path" -maxdepth 4 -type d -name ".git" -prune -o -type d -name "$pattern" -print 2>/dev/null)
 done
 
 if [[ ${#detected_paths[@]} -gt 0 ]]; then
@@ -414,6 +498,10 @@ if [[ ${#detected_paths[@]} -gt 0 ]]; then
 
         for i in "${!detected_paths[@]}"; do
             if [[ "${selected[$i]}" == "1" ]]; then
+                if ! validate_relative_path "${detected_paths[$i]}"; then
+                    warn "Пропущен небезопасный путь: ${detected_paths[$i]}"
+                    continue
+                fi
                 claudeignore_entries+=("${detected_paths[$i]}")
                 if [[ "$level" == "2" ]]; then
                     overlay_entries+=("${detected_paths[$i]}")
@@ -449,7 +537,7 @@ while [[ "$add_more" == "1" ]]; do
     while IFS= read -r found_path; do
         rel="${found_path#"$projects_path"/}"
         search_results+=("$rel")
-    done < <(find "$projects_path" -maxdepth 5 -iname "*${safe_term}*" 2>/dev/null | head -20)
+    done < <(find "$projects_path" -maxdepth 5 -name ".git" -prune -o -iname "*${safe_term}*" -print 2>/dev/null | head -20)
 
     if [[ ${#search_results[@]} -eq 0 ]]; then
         warn "Нет совпадений для '$search_term'"
@@ -476,6 +564,11 @@ while [[ "$add_more" == "1" ]]; do
                 if (( idx < ${#search_results[@]} )); then
                     entry="${search_results[$idx]}"
                     full_entry="$projects_path/$entry"
+
+                    if ! validate_relative_path "$entry"; then
+                        warn "Пропущен небезопасный путь: $entry"
+                        continue
+                    fi
 
                     # tmpfs работает только с директориями
                     if [[ -d "$full_entry" ]]; then
@@ -550,12 +643,15 @@ fi
 
 if [[ ${#unique_overlay[@]} -gt 0 ]]; then
     override_file="$SCRIPT_DIR/docker-compose.override.yml"
+    assert_not_symlink "$override_file"
     # Бэкап существующего override перед перезаписью
     if [[ -f "$override_file" ]]; then
         backup="${override_file}.bak.$(date +%Y%m%d%H%M%S)"
         cp "$override_file" "$backup"
         warn "docker-compose.override.yml сохранён в $(basename "$backup")"
     fi
+    # Атомарная запись через temp-файл
+    _tmp_override=$(mktemp "$SCRIPT_DIR/.override.XXXXXX")
     {
         echo "# Сгенерировано claudebox setup.sh"
         echo "# tmpfs-оверлеи для скрытия чувствительных директорий"
@@ -563,10 +659,15 @@ if [[ ${#unique_overlay[@]} -gt 0 ]]; then
         echo "  claudebox:"
         echo "    volumes:"
         for entry in "${unique_overlay[@]}"; do
+            # Экранируем для YAML: кавычки вокруг target
+            escaped="${entry//\\/\\\\}"
+            escaped="${escaped//\"/\\\"}"
             echo "      - type: tmpfs"
-            echo "        target: /home/claude/projects/${entry}"
+            echo "        target: \"/home/claude/projects/${escaped}\""
         done
-    } > "$override_file"
+    } > "$_tmp_override"
+    chmod 644 "$_tmp_override"
+    mv -f "$_tmp_override" "$override_file"
     success "Создан docker-compose.override.yml с ${#unique_overlay[@]} tmpfs-оверлеем(ями)"
 fi
 
