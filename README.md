@@ -57,7 +57,10 @@ docker compose exec claudebox bash
 # Войти в контейнер
 docker compose exec claudebox bash
 
-# Запустить Claude Code
+# Запустить Claude Code (с API-ключом из секрета)
+claude-safe
+
+# Или напрямую (если авторизовались через браузер)
 claude
 
 # Проверить статус VPN и API
@@ -147,11 +150,14 @@ docker compose logs claudebox
 
 **Что защищено:**
 - API-ключ хранится в файле (`secrets/`), а не в env-переменной — не виден через `docker inspect`
+- API-ключ передаётся только в процесс Claude через wrapper (`claude-safe`), не экспортируется глобально — не виден в `/proc/1/environ`
 - Kill-switch блокирует весь трафик вне VPN (включая IPv6)
-- sudo внутри контейнера ограничен только командами VPN и iptables
+- Entrypoint запускается от root для настройки VPN, затем сбрасывает привилегии до `claude` через `gosu`
+- `no-new-privileges` запрещает эскалацию привилегий внутри контейнера
+- sudo отсутствует в контейнере — пользователь `claude` не может повысить привилегии
 - Capabilities: только `NET_ADMIN`, все остальные сброшены (`cap_drop: ALL`)
 - Ресурсные лимиты: 4 GB RAM, 2 CPU, 256 процессов
-- VPN-конфиг монтируется read-only
+- VPN-конфиг монтируется read-only, доступен только root
 
 **Что стоит учитывать:**
 - Claude Code по дизайну выполняет произвольные команды — вредоносный код в проекте может прочитать API-ключ из `/run/secrets/`
@@ -175,7 +181,8 @@ claudebox/
 ├── entrypoint.sh           # Запуск VPN → kill-switch → проверка API → shell
 ├── setup.sh                # Интерактивный wizard для настройки
 ├── scripts/
-│   └── health-check.sh     # Диагностика VPN и API
+│   ├── health-check.sh     # Диагностика VPN и API
+│   └── claude-wrapper.sh   # Wrapper: инжектит API-ключ только в процесс Claude
 ├── configs/
 │   └── amnezia.conf.example  # Пример конфига VPN
 ├── secrets/                # (gitignored) API-ключ

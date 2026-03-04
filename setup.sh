@@ -173,6 +173,8 @@ if [[ "$auth_choice" == "1" ]]; then
         mkdir -p "$secrets_dir"
         echo -n "$api_key" > "$secrets_dir/anthropic_api_key"
         chmod 600 "$secrets_dir/anthropic_api_key"
+        # Clear the key from shell memory
+        api_key=""; unset api_key
         success "API key saved to secrets/anthropic_api_key"
         break
     done
@@ -503,7 +505,7 @@ if [[ "$choice" == "1" || "$choice" == "2" ]]; then
         echo -e "  ${CYAN}docker compose exec claudebox bash${RESET}"
         echo ""
         echo -e "  ${GREEN}${BOLD}Inside the container:${RESET}"
-        echo -e "  ${CYAN}claude${RESET}  — start Claude Code"
+        echo -e "  ${CYAN}claude-safe${RESET}  — start Claude Code (with API key)"
         echo -e "  ${CYAN}health-check${RESET}  — check VPN & API status"
         echo ""
         echo -e "  ${GREEN}${BOLD}Your projects are at:${RESET} /home/claude/projects"

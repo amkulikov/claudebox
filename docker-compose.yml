@@ -28,6 +28,8 @@ services:
           memory: 4g
           cpus: "2.0"
     pids_limit: 256
+    security_opt:
+      - no-new-privileges:true
     stdin_open: true
     tty: true
     restart: unless-stopped

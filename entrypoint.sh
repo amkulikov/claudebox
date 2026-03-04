@@ -15,12 +15,12 @@ warn()    { echo -e "${YELLOW}[claudebox] ⚠${RESET} $1"; }
 error()   { echo -e "${RED}[claudebox] ✗${RESET} $1"; }
 
 AWG_CONF="/etc/amnezia/awg0.conf"
+CLAUDE_USER="claude"
 
-# ─── Load API key from secret file if available ─────────────────────────────
-if [[ -z "${ANTHROPIC_API_KEY:-}" && -f "${ANTHROPIC_API_KEY_FILE:-/run/secrets/anthropic_api_key}" ]]; then
-    ANTHROPIC_API_KEY=$(cat "${ANTHROPIC_API_KEY_FILE}")
-    export ANTHROPIC_API_KEY
-fi
+# ─── API key handling ────────────────────────────────────────────────────────
+# NOTE: We do NOT export the API key here. It would leak via /proc/1/environ
+# to all processes. Instead, claude-safe wrapper injects it per-process only.
+# See: scripts/claude-wrapper.sh
 
 # ─── VPN Setup ──────────────────────────────────────────────────────────────
 start_vpn() {
@@ -33,16 +33,15 @@ start_vpn() {
 
     info "Starting AmneziaWG VPN..."
 
-    # Use full path so awg-quick/wg-quick finds the config
-    # (default search paths are /etc/amneziawg/ and /etc/wireguard/, not /etc/amnezia/)
+    # Entrypoint runs as root — no sudo needed
     if command -v awg-quick &>/dev/null; then
-        if ! sudo awg-quick up "$AWG_CONF"; then
+        if ! awg-quick up "$AWG_CONF"; then
             error "awg-quick failed to start VPN. See errors above."
             return 1
         fi
     elif command -v wg-quick &>/dev/null; then
         warn "awg-quick not found, trying wg-quick (no obfuscation)..."
-        if ! sudo wg-quick up "$AWG_CONF"; then
+        if ! wg-quick up "$AWG_CONF"; then
             error "wg-quick failed to start VPN. See errors above."
             return 1
         fi
@@ -90,27 +89,27 @@ setup_killswitch() {
     dns_servers=$(grep -i '^DNS' "$AWG_CONF" | head -1 | awk -F'=' '{print $2}' | tr ',' '\n' | tr -d ' ')
 
     # Set default policy to DROP first (no traffic leak window)
-    sudo iptables -P OUTPUT DROP 2>/dev/null || true
-    sudo iptables -F OUTPUT 2>/dev/null || true
+    iptables -P OUTPUT DROP 2>/dev/null || true
+    iptables -F OUTPUT 2>/dev/null || true
 
     # Block all IPv6 to prevent leaks
-    sudo ip6tables -P OUTPUT DROP 2>/dev/null || true
-    sudo ip6tables -F OUTPUT 2>/dev/null || true
-    sudo ip6tables -A OUTPUT -o lo -j ACCEPT
-    sudo ip6tables -A OUTPUT -j DROP
+    ip6tables -P OUTPUT DROP 2>/dev/null || true
+    ip6tables -F OUTPUT 2>/dev/null || true
+    ip6tables -A OUTPUT -o lo -j ACCEPT
+    ip6tables -A OUTPUT -j DROP
 
     # IPv4: allow only VPN traffic
     local iface_name
     iface_name=$(basename "$AWG_CONF" .conf)
-    sudo iptables -A OUTPUT -o lo -j ACCEPT
-    sudo iptables -A OUTPUT -o "$iface_name" -j ACCEPT
-    sudo iptables -A OUTPUT -d "$endpoint" -j ACCEPT
+    iptables -A OUTPUT -o lo -j ACCEPT
+    iptables -A OUTPUT -o "$iface_name" -j ACCEPT
+    iptables -A OUTPUT -d "$endpoint" -j ACCEPT
 
     # Allow DNS only to servers from VPN config
     if [[ -n "$dns_servers" ]]; then
         for dns in $dns_servers; do
-            sudo iptables -A OUTPUT -d "$dns" -p udp --dport 53 -j ACCEPT
-            sudo iptables -A OUTPUT -d "$dns" -p tcp --dport 53 -j ACCEPT
+            iptables -A OUTPUT -d "$dns" -p udp --dport 53 -j ACCEPT
+            iptables -A OUTPUT -d "$dns" -p tcp --dport 53 -j ACCEPT
         done
     fi
 
@@ -121,7 +120,7 @@ setup_killswitch() {
         # Allow only the Docker gateway subnet (/16)
         local docker_subnet
         docker_subnet=$(echo "$docker_network" | awk -F. '{print $1"."$2".0.0/16"}')
-        sudo iptables -A OUTPUT -d "$docker_subnet" -j ACCEPT
+        iptables -A OUTPUT -d "$docker_subnet" -j ACCEPT
     fi
 
     success "Kill switch active — traffic only through VPN"
@@ -162,9 +161,12 @@ fi
 
 echo ""
 echo -e "  ${DIM}Commands:${RESET}"
-echo -e "  ${CYAN}claude${RESET}        — Start Claude Code"
+echo -e "  ${CYAN}claude-safe${RESET}   — Start Claude Code (API key injected securely)"
+echo -e "  ${CYAN}claude${RESET}        — Start Claude Code (if authenticated via browser)"
 echo -e "  ${CYAN}health-check${RESET}  — Check VPN & API status"
 echo ""
 
-# Hand off to CMD
-exec "$@"
+# ─── Drop privileges and hand off to CMD ─────────────────────────────────────
+# Run the user's shell as non-root. This is the last thing we do.
+# gosu is preferred over su because it execs directly (no extra process).
+exec gosu "$CLAUDE_USER" "$@"

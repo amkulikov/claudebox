@@ -37,11 +37,11 @@ else
     fail "No VPN interface found"
 fi
 
-# Show peer status
+# Show peer status (awg/wg show requires root — may not be available)
 if command -v awg &>/dev/null; then
-    handshake=$(sudo awg show 2>/dev/null | grep "latest handshake" | head -1)
+    handshake=$(awg show 2>/dev/null | grep "latest handshake" | head -1 || true)
 elif command -v wg &>/dev/null; then
-    handshake=$(sudo wg show 2>/dev/null | grep "latest handshake" | head -1)
+    handshake=$(wg show 2>/dev/null | grep "latest handshake" | head -1 || true)
 else
     handshake=""
 fi

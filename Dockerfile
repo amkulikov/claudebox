@@ -15,7 +15,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         jq \
         git \
         openssh-client \
-        sudo \
+        gosu \
     && rm -rf /var/lib/apt/lists/*
 
 # ─── Node.js 22 LTS ─────────────────────────────────────────────────────────
@@ -50,10 +50,8 @@ RUN which awg-quick || which wg-quick || (echo "ERROR: No WireGuard tools instal
 # ─── Claude Code CLI ────────────────────────────────────────────────────────
 RUN npm install -g @anthropic-ai/claude-code@latest
 
-# ─── User setup ─────────────────────────────────────────────────────────────
-RUN useradd -m -s /bin/bash claude \
-    && echo "claude ALL=(root) NOPASSWD: /usr/bin/awg-quick, /usr/bin/wg-quick, /usr/sbin/iptables, /usr/sbin/ip6tables, /usr/bin/awg, /usr/bin/wg, /usr/sbin/ip" > /etc/sudoers.d/claude \
-    && chmod 440 /etc/sudoers.d/claude
+# ─── User setup (no sudo — entrypoint runs as root, drops to claude via gosu)
+RUN useradd -m -s /bin/bash claude
 
 # ─── Directories with correct ownership ─────────────────────────────────────
 RUN mkdir -p /home/claude/projects /home/claude/.claude \
@@ -63,6 +61,10 @@ RUN mkdir -p /home/claude/projects /home/claude/.claude \
 COPY scripts/health-check.sh /usr/local/bin/health-check
 RUN chmod +x /usr/local/bin/health-check
 
+# ─── Claude wrapper (injects API key per-process, not globally) ─────────────
+COPY scripts/claude-wrapper.sh /usr/local/bin/claude-safe
+RUN chmod +x /usr/local/bin/claude-safe
+
 # ─── Entrypoint ─────────────────────────────────────────────────────────────
 COPY entrypoint.sh /entrypoint.sh
 RUN chmod +x /entrypoint.sh
@@ -71,7 +73,7 @@ RUN chmod +x /entrypoint.sh
 RUN mkdir -p /etc/amnezia && chmod 700 /etc/amnezia
 
 WORKDIR /home/claude/projects
-USER claude
 
+# Entrypoint runs as root to set up VPN/killswitch, then drops to claude user
 ENTRYPOINT ["/entrypoint.sh"]
 CMD ["bash"]
