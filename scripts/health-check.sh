@@ -68,7 +68,7 @@ echo ""
 
 # 3. Подключение к API
 echo -e "${CYAN}  Claude API${RESET}"
-if curl -sf --max-time 5 "https://api.anthropic.com" >/dev/null 2>&1; then
+if curl -s -o /dev/null --max-time 5 "https://api.anthropic.com" 2>/dev/null; then
     ok "HTTPS-подключение к api.anthropic.com"
 else
     fail "Нет доступа к api.anthropic.com по HTTPS"

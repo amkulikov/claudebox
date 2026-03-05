@@ -8,19 +8,12 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         ca-certificates \
         gnupg \
         iptables \
-        ip6tables \
         iproute2 \
-        dns-root-data \
         dnsutils \
         jq \
         git \
         openssh-client \
         gosu \
-    && rm -rf /var/lib/apt/lists/*
-
-# ─── Node.js 22 LTS ──────────────────────────────────────────────────────────
-RUN curl -fsSL https://deb.nodesource.com/setup_22.x | bash - \
-    && apt-get install -y --no-install-recommends nodejs \
     && rm -rf /var/lib/apt/lists/*
 
 # ─── AmneziaWG ───────────────────────────────────────────────────────────────
@@ -48,11 +41,13 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # Проверяем, что хотя бы один WG-инструмент установлен
 RUN which awg-quick || which wg-quick || (echo "ОШИБКА: WireGuard-инструменты не установлены" && exit 1)
 
-# ─── Claude Code CLI ─────────────────────────────────────────────────────────
-RUN npm install -g @anthropic-ai/claude-code@latest
+# ─── Claude Code CLI (native installer, npm deprecated) ─────────────────────
+RUN curl -fsSL https://claude.ai/install.sh | bash \
+    && ln -sf /root/.local/bin/claude /usr/local/bin/claude
 
 # ─── Создание пользователя (без sudo — entrypoint от root, сброс до claude через gosu)
-RUN useradd -m -s /bin/bash claude
+RUN useradd -m -s /bin/bash claude \
+    && chmod 755 /home/claude
 
 # ─── Директории с правильными правами ─────────────────────────────────────────
 RUN mkdir -p /home/claude/projects /home/claude/.claude \
