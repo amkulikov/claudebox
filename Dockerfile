@@ -69,7 +69,7 @@ RUN curl -fsSL https://deb.nodesource.com/setup_22.x | bash - \
 RUN npm install -g @anthropic-ai/claude-code
 
 # ─── Создание пользователя (без sudo — entrypoint от root, сброс до claude через gosu)
-RUN groupadd -g 998 docker 2>/dev/null || true \
+RUN groupadd docker 2>/dev/null || true \
     && useradd -m -s /bin/bash claude \
     && usermod -aG docker claude \
     && chmod 755 /home/claude
