@@ -41,12 +41,32 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # Проверяем, что хотя бы один WG-инструмент установлен
 RUN which awg-quick || which wg-quick || (echo "ОШИБКА: WireGuard-инструменты не установлены" && exit 1)
 
+# ─── Go (latest stable) ─────────────────────────────────────────────────────
+ARG GO_VERSION=1.24.1
+RUN curl -fsSL "https://go.dev/dl/go${GO_VERSION}.linux-$(dpkg --print-architecture).tar.gz" \
+        | tar -C /usr/local -xz
+ENV PATH="/usr/local/go/bin:/home/claude/go/bin:${PATH}"
+ENV GOPATH="/home/claude/go"
+
+# ─── Docker CLI (используем Docker хоста через монтирование docker.sock) ────
+RUN install -m 0755 -d /etc/apt/keyrings \
+    && curl -fsSL https://download.docker.com/linux/ubuntu/gpg -o /etc/apt/keyrings/docker.asc \
+    && chmod a+r /etc/apt/keyrings/docker.asc \
+    && echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.asc] \
+       https://download.docker.com/linux/ubuntu $(. /etc/os-release && echo "$VERSION_CODENAME") stable" \
+       > /etc/apt/sources.list.d/docker.list \
+    && apt-get update \
+    && apt-get install -y --no-install-recommends docker-ce-cli docker-compose-plugin \
+    && rm -rf /var/lib/apt/lists/*
+
 # ─── Claude Code CLI (native installer, npm deprecated) ─────────────────────
 RUN curl -fsSL https://claude.ai/install.sh | bash \
     && ln -sf /root/.local/bin/claude /usr/local/bin/claude
 
 # ─── Создание пользователя (без sudo — entrypoint от root, сброс до claude через gosu)
-RUN useradd -m -s /bin/bash claude \
+RUN groupadd -g 998 docker 2>/dev/null || true \
+    && useradd -m -s /bin/bash claude \
+    && usermod -aG docker claude \
     && chmod 755 /home/claude
 
 # ─── Директории с правильными правами ─────────────────────────────────────────

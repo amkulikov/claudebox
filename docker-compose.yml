@@ -21,6 +21,7 @@ services:
       - ${PROJECTS_PATH:-./_projects}:/home/claude/projects
       - claude-config:/home/claude/.claude
       - ./secrets/anthropic_api_key:/run/secrets/anthropic_api_key:ro
+      - /var/run/docker.sock:/var/run/docker.sock  # Docker хоста (опционально)
     env_file:
       - .env
     environment:
