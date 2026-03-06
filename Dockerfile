@@ -59,9 +59,14 @@ RUN install -m 0755 -d /etc/apt/keyrings \
     && apt-get install -y --no-install-recommends docker-ce-cli docker-compose-plugin \
     && rm -rf /var/lib/apt/lists/*
 
-# ─── Claude Code CLI (native installer, npm deprecated) ─────────────────────
-RUN curl -fsSL https://claude.ai/install.sh | bash \
-    && ln -sf /root/.local/bin/claude /usr/local/bin/claude
+# ─── Node.js (LTS) — нужен для Claude Code CLI ─────────────────────────────
+RUN curl -fsSL https://deb.nodesource.com/setup_22.x | bash - \
+    && apt-get install -y --no-install-recommends nodejs \
+    && rm -rf /var/lib/apt/lists/*
+
+# ─── Claude Code CLI ────────────────────────────────────────────────────────
+# npm-установка надёжнее native installer в constrained-окружениях (OOM при сборке)
+RUN npm install -g @anthropic-ai/claude-code
 
 # ─── Создание пользователя (без sudo — entrypoint от root, сброс до claude через gosu)
 RUN groupadd -g 998 docker 2>/dev/null || true \
