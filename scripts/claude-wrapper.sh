@@ -2,6 +2,20 @@
 # Обёртка для Claude Code CLI: инжектит API-ключ только в процесс Claude.
 # Это предотвращает утечку ключа через /proc/1/environ (PID entrypoint).
 
+# ─── Защита от запуска под root ──────────────────────────────────────────────
+# Claude Code запрещает --dangerously-skip-permissions под root.
+# Если мы root — переключаемся на claude автоматически.
+if [[ "$(id -u)" == "0" ]]; then
+    CLAUDE_USER="${CLAUDE_USER:-claude}"
+    if command -v gosu &>/dev/null; then
+        exec gosu "$CLAUDE_USER" "$0" "$@"
+    elif command -v runuser &>/dev/null; then
+        exec runuser -u "$CLAUDE_USER" -- "$0" "$@"
+    else
+        exec su -s /bin/bash "$CLAUDE_USER" -c "\"$0\" \"\$@\"" -- "$@"
+    fi
+fi
+
 REAL_CLAUDE="$(which -a claude 2>/dev/null | grep -Fv "$0" | head -1)"
 if [[ -z "$REAL_CLAUDE" ]]; then
     # Фолбэк: ищем claude в стандартных путях (native installer + npm legacy)

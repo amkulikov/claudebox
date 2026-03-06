@@ -310,15 +310,27 @@ fi
 
 # ─── Сброс привилегий и передача управления CMD ──────────────────────────────
 # Запускаем CMD от имени непривилегированного юзера.
-# Порядок: gosu (exec без лишнего процесса) → runuser (PAM, всегда есть) → прямой exec.
+# Порядок: gosu (exec без лишнего процесса) → runuser (PAM, всегда есть) → su.
+# НИКОГДА не запускаем CMD от root — Claude Code запрещает --dangerously-skip-permissions под root.
 if [[ "$(id -u)" == "0" ]]; then
-    if command -v gosu &>/dev/null && gosu "$CLAUDE_USER" true 2>/dev/null; then
+    # Проверяем, что пользователь claude существует
+    if ! id "$CLAUDE_USER" &>/dev/null; then
+        error "Пользователь $CLAUDE_USER не найден — создаём..."
+        useradd -m -s /bin/bash "$CLAUDE_USER" 2>/dev/null || true
+    fi
+
+    if command -v gosu &>/dev/null; then
+        info "Сброс привилегий до $CLAUDE_USER (gosu)..."
         exec gosu "$CLAUDE_USER" "$@"
     elif command -v runuser &>/dev/null; then
+        info "Сброс привилегий до $CLAUDE_USER (runuser)..."
         exec runuser -u "$CLAUDE_USER" -- "$@"
+    elif command -v su &>/dev/null; then
+        info "Сброс привилегий до $CLAUDE_USER (su)..."
+        exec su -s /bin/bash "$CLAUDE_USER" -c '"$0" "$@"' -- "$@"
     else
-        warn "Не удалось сбросить привилегии — запуск от root"
-        exec "$@"
+        error "Не удалось сбросить привилегии — нет gosu/runuser/su. Прерываем."
+        exit 1
     fi
 else
     exec "$@"
